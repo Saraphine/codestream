@@ -48,7 +48,7 @@ import {
 	PRCommentCardRow
 } from "./PullRequestComponents";
 import { PullRequestTimelineItems, GHOST } from "./PullRequestTimelineItems";
-import { DropdownButton } from "./Review/DropdownButton";
+import { DropdownButton } from "./DropdownButton";
 import { InlineMenu } from "../src/components/controls/InlineMenu";
 import { LoadingMessage } from "../src/components/LoadingMessage";
 import styled from "styled-components";
@@ -128,6 +128,12 @@ const StatusMetaRow = styled.div`
 				border-radius: 6px;
 				overflow: hidden;
 				background-color: #fff;
+				&.appIconFallback {
+					color: #678;
+					display: flex;
+					align-items: center;
+					justify-content: center;
+				}
 			}
 		}
 	}
@@ -176,6 +182,7 @@ export const PRAuthorBadges = (props: {
 					derivedState.prLabel.pullrequest
 				}`}
 				placement="bottom"
+				delay={1}
 			>
 				<div className="author">Author</div>
 			</Tooltip>
@@ -188,6 +195,7 @@ export const PRAuthorBadges = (props: {
 				key="association"
 				title={AUTHOR_ASSOCIATION_MAP[node.authorAssociation][1]}
 				placement="bottom"
+				delay={1}
 			>
 				<div className="member">{AUTHOR_ASSOCIATION_MAP[node.authorAssociation][0]}</div>
 			</Tooltip>
@@ -254,6 +262,7 @@ export const PullRequestConversationTab = (props: {
 		};
 	});
 	const { pr } = derivedState;
+	const defaultMergeMethod = ghRepo.viewerDefaultMergeMethod || derivedState.defaultMergeMethod;
 
 	const [availableLabels, setAvailableLabels] = useState(EMPTY_ARRAY);
 	const [availableReviewers, setAvailableReviewers] = useState(EMPTY_ARRAY);
@@ -264,7 +273,7 @@ export const PullRequestConversationTab = (props: {
 	const [isLocking, setIsLocking] = useState(false);
 	const [isLockingReason, setIsLockingReason] = useState("");
 	const [isLoadingLocking, setIsLoadingLocking] = useState(false);
-	const [mergeMethod, setMergeMethod] = useState(derivedState.defaultMergeMethod);
+	const [mergeMethod, setMergeMethod] = useState(defaultMergeMethod);
 	const [clInstructionsIsOpen, toggleClInstructions] = useReducer((open: boolean) => !open, false);
 	const [cloneURLType, setCloneURLType] = useState("https");
 	const [cloneURL, setCloneURL] = useState(pr && pr.repository ? `${pr.repository.url}.git` : "");
@@ -331,12 +340,7 @@ export const PullRequestConversationTab = (props: {
 			}
 			setIsLoadingMessage("");
 		},
-		[
-			pr.providerId,
-			derivedState.currentPullRequestId!,
-			derivedState.defaultMergeMethod,
-			mergeMethod
-		]
+		[pr.providerId, derivedState.currentPullRequestId!, defaultMergeMethod, mergeMethod]
 	);
 
 	const lockPullRequest = async () => {
@@ -1060,7 +1064,7 @@ export const PullRequestConversationTab = (props: {
 												ghRepo={ghRepo}
 												action={mergePullRequest}
 												onSelect={setMergeMethod}
-												defaultMergeMethod={derivedState.defaultMergeMethod}
+												defaultMergeMethod={defaultMergeMethod}
 												mergeText="As an administrator, you may still merge this pull request."
 											/>
 										)}
@@ -1143,7 +1147,7 @@ export const PullRequestConversationTab = (props: {
 									ghRepo={ghRepo}
 									action={mergePullRequest}
 									onSelect={setMergeMethod}
-									defaultMergeMethod={derivedState.defaultMergeMethod}
+									defaultMergeMethod={defaultMergeMethod}
 								/>
 							)}
 						</PRCommentCard>
@@ -1316,6 +1320,7 @@ export const PullRequestConversationTab = (props: {
 					pr={pr}
 					setIsLoadingMessage={setIsLoadingMessage}
 					__onDidRender={__onDidRender}
+					key={Math.random().toString()}
 				/>
 			</div>
 			<PRSidebar>
@@ -1535,8 +1540,8 @@ export const PullRequestConversationTab = (props: {
 							))}
 					</PRHeadshots>
 				</PRSection>
-				<PRSection style={{ borderBottom: "none" }}>
-					{pr.viewerCanUpdate && (
+				{pr.viewerCanUpdate && (
+					<PRSection style={{ borderBottom: "none" }}>
 						<h1 style={{ margin: 0 }}>
 							{pr.locked ? (
 								<a onClick={() => setIsLocking(true)} style={{ display: "flex" }}>
@@ -1550,8 +1555,8 @@ export const PullRequestConversationTab = (props: {
 								</a>
 							)}
 						</h1>
-					)}
-				</PRSection>
+					</PRSection>
+				)}
 			</PRSidebar>
 		</PRContent>
 	);
@@ -1832,15 +1837,7 @@ const CommitCheckRun = (props: { checkData: CheckData }) => {
 				)}
 			</PRIconButton>
 			{checkData.appIcon && checkData.appIcon.src && (
-				<Icon
-					src={
-						checkData.appIcon.src.match(/^http/)
-							? checkData.appIcon.src
-							: `https://github.com${checkData.appIcon.src}`
-					}
-					title={checkData.appIcon.title}
-					className="appIcon"
-				/>
+				<CheckAppIcon src={checkData.appIcon.src} title={checkData.appIcon.title} />
 			)}
 			{checkData.Description && <>{checkData.Description}</>}
 			<Link href={checkData.detailsLink} className="details">
@@ -1848,6 +1845,33 @@ const CommitCheckRun = (props: { checkData: CheckData }) => {
 			</Link>
 		</div>
 	);
+};
+
+const CheckAppIcon = (props: { src: string; title: string }) => {
+	const src = props.src.match(/^http/) ? props.src : `https://github.com${props.src}`;
+	const [imageError, setImageError] = useState(false);
+
+	useEffect(() => {
+		setImageError(false);
+	}, [props.src]);
+
+	if (imageError) {
+		return <Icon name="server" title={props.title} className="appIcon appIconFallback" />;
+	}
+	const image = (
+		<span className="icon appIcon">
+			<img src={src} onError={() => setImageError(true)} />
+		</span>
+	);
+	if (props.title) {
+		return (
+			<Tooltip content={props.title}>
+				<span>{image}</span>
+			</Tooltip>
+		);
+	} else {
+		return image;
+	}
 };
 
 const CopyableTerminal = (props: any) => {
@@ -1971,7 +1995,7 @@ const getChecksData = (statusChecks: (CheckRun | StatusContext)[]) => {
 
 			checkData.appIcon = {
 				src: check.avatarUrl,
-				title: ` generated this status`
+				title: ""
 			};
 			checkData.Description = (
 				<div className="description">

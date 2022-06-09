@@ -10,10 +10,7 @@ import { xfs } from "./xfs";
 export class DocumentEventHandler {
 	private _disposable: Disposable | undefined;
 
-	constructor(
-		private session: CodeStreamSession,
-		private documentManager: DocumentManager
-	) {
+	constructor(private session: CodeStreamSession, private documentManager: DocumentManager) {
 		const disposables: Disposable[] = [
 			this.documentManager.onDidChangeContent(this.onDocumentDidChangeContent, this),
 			this.documentManager.onDidSave(this.onDocumentDidSave, this),

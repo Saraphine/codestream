@@ -106,3 +106,25 @@ export const AddIgnoreFilesRequestType = new RequestType<
 	void,
 	void
 >("codestream/repos/ignore-files/add");
+
+export interface NormalizeUrlRequest {
+	url: string;
+}
+
+export interface NormalizeUrlResponse {
+	normalizedUrl: string;
+}
+
+export const NormalizeUrlRequestType = new RequestType<
+	NormalizeUrlRequest,
+	NormalizeUrlResponse,
+	void,
+	void
+>("codestream/normalizeUrl");
+
+export const MatchReposRequestType = new RequestType<
+	MatchReposRequest,
+	MatchReposResponse,
+	void,
+	void
+>("codestream/repos/match");

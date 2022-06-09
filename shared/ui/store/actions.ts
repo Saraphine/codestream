@@ -38,6 +38,7 @@ import {
 	apiUpgradeRequired
 } from "../store/apiVersioning/actions";
 import { bootstrapCompanies } from "./companies/actions";
+import { CSApiCapabilities } from "../protocols/agent/api.protocol.models";
 
 export const reset = () => action("RESET");
 
@@ -81,8 +82,17 @@ export const bootstrap = (data?: SignedInBootstrapData) => async dispatch => {
 const bootstrapEssentials = (data: BootstrapInHostResponse) => dispatch => {
 	dispatch(setIde(data.ide!));
 	dispatch(sessionActions.setSession(data.session));
-	dispatch(contextActions.setContext({ hasFocus: true, ...data.context }));
+	dispatch(
+		contextActions.setContext({
+			hasFocus: true,
+			...data.context,
+			sessionStart: new Date().getTime()
+		})
+	);
 	dispatch(updateCapabilities(data.capabilities || {}));
+	if (data.capabilities) {
+		dispatch(apiCapabilitiesUpdated(data.capabilities as CSApiCapabilities));
+	}
 	dispatch(updateConfigs({ ...data.configs, ...data.environmentInfo }));
 	dispatch({ type: "@pluginVersion/Set", payload: data.version });
 	dispatch({ type: BootstrapActionType.Complete });

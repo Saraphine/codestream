@@ -1,6 +1,6 @@
 import React from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { Row } from "./CrossPostIssueControls/IssueDropdown";
+import { Row } from "./CrossPostIssueControls/IssuesPane";
 import { PRHeadshot } from "../src/components/Headshot";
 import Tooltip from "./Tooltip";
 import { GetMyPullRequestsResponse, ThirdPartyProviderConfig } from "@codestream/protocols/agent";
@@ -134,6 +134,11 @@ export function ConfigurePullRequestQuery(props: Props) {
 	}, [providerIdField]);
 
 	const isValidQuery = query => {
+		// "recent" is a special query string that we handle specifically
+		if (query === "recent") {
+			setValidQuery(true);
+			return true;
+		}
 		if (providerIdField === "github*com" || providerIdField === "github/enterprise") {
 			// Verify if valid query for Github
 			const queryStr = query.replace(/:/g, " ").split(/\s+/);
@@ -250,11 +255,11 @@ export function ConfigurePullRequestQuery(props: Props) {
 											Missing required qualifier.{" "}
 											{providerIdField === "github*com" ||
 											providerIdField === "github/enterprise" ? (
-												<Link href="https://docs.codestream.com/userguide/faq/custom-queries/">
+												<Link href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github">
 													Learn more.
 												</Link>
 											) : (
-												<Link href="https://docs.codestream.com/userguide/faq/custom-queries-gl/">
+												<Link href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab">
 													Learn more.
 												</Link>
 											)}
@@ -267,11 +272,11 @@ export function ConfigurePullRequestQuery(props: Props) {
 												Invalid query.{" "}
 												{providerIdField === "github*com" ||
 												providerIdField === "github/enterprise" ? (
-													<Link href="https://docs.codestream.com/userguide/faq/custom-queries/">
+													<Link href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github">
 														Learn more.
 													</Link>
 												) : (
-													<Link href="https://docs.codestream.com/userguide/faq/custom-queries-gl/">
+													<Link href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab">
 														Learn more.
 													</Link>
 												)}

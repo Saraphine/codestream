@@ -60,6 +60,22 @@ export function reduceEditorContext(state = initialState, action: EditorContextA
 
 			return { ...state, ...action.payload, scmInfo: nextScmInfo };
 		}
+		case EditorContextActionsType.ClearProcessBuffer: {
+			return {
+				...state,
+				buffer: undefined
+			};
+		}
+		case EditorContextActionsType.AppendProcessBuffer: {
+			let payload = action.payload;
+			if (payload && state.buffer && state.buffer.text) {
+				payload.text = (state.buffer.text || "") + "\n" + action.payload.text;
+			}
+			return {
+				...state,
+				buffer: payload
+			};
+		}
 		case "RESET":
 			return initialState;
 		default:

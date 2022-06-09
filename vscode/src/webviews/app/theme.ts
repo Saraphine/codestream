@@ -204,6 +204,16 @@ export function initializeColorPalette() {
 		bodyStyle.setProperty("--sidebar-header-foreground", color);
 		color = computedStyle.getPropertyValue("--vscode-sideBarSectionHeader-border").trim();
 		bodyStyle.setProperty("--sidebar-header-border", color);
+		color = computedStyle.getPropertyValue("--vscode-list-activeSelectionBackground").trim();
+		bodyStyle.setProperty("--list-active-background", color);
+		color = computedStyle.getPropertyValue("--vscode-list-activeSelectionForeground").trim();
+		bodyStyle.setProperty("--list-active-foreground", color);
+		color = computedStyle.getPropertyValue("--vscode-list-focusOutline").trim();
+		bodyStyle.setProperty("--list-active-outline", color);
+		color = computedStyle.getPropertyValue("--vscode-list-inactiveSelectionBackground").trim();
+		bodyStyle.setProperty("--list-inactive-background", color);
+		color = computedStyle.getPropertyValue("--vscode-list-inactiveSelectionForeground").trim();
+		bodyStyle.setProperty("--list-inactive-foreground", color);
 	};
 
 	const observer = new MutationObserver(onColorThemeChanged);

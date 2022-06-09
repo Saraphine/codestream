@@ -1,4 +1,4 @@
-import { GetFileScmInfoResponse } from "@codestream/protocols/agent";
+import { EnvironmentHost, GetFileScmInfoResponse } from "@codestream/protocols/agent";
 import { Position, Range } from "vscode-languageserver-types";
 import { NewPullRequestBranch } from "./webview.protocol";
 
@@ -46,8 +46,7 @@ export enum WebviewPanels {
 	NewComment = "new-comment",
 	NewIssue = "new-issue",
 	NewReview = "new-review",
-	Team = "people",
-	Profile = "profile",
+	Profile = "profile", // DO NOT USE
 	PullRequest = "pull-request",
 	Review = "review",
 	Status = "status",
@@ -62,9 +61,14 @@ export enum WebviewPanels {
 	Sidebar = "sidebar",
 	OpenReviews = "open-reviews",
 	OpenPullRequests = "open-pull-requests",
-	WorkInProgress = "work-in-progress",
 	Onboard = "onboard",
-	Commits = "commits"
+	OnboardNewRelic = "onboard-newrelic",
+	Commits = "commits",
+	ErrorsInbox = "errorsinbox",
+	CodeError = "code-error",
+	Observability = "observability",
+	PixieDynamicLogging = "pixie-dynamic-logging",
+	MethodLevelTelemetry = "method-level-telemetry"
 }
 
 // this is for mixpanel and maps the values from WebviewPanels to their
@@ -81,12 +85,15 @@ export const WebviewPanelNames = {
 	status: "Status",
 	"landing-redirect": "Landing Redirect",
 	"gtting-started": "Getting Started", // this is a typo but now baked into user data, so let's just leave it
-	"work-in-progress": "Work in Progress",
 	"open-pull-requests": "Pull Requests",
 	"open-reviews": "Feedback Requests",
 	"codemarks-for-file": "Codemarks",
 	tasks: "Issues",
-	onboard: "Onboard"
+	onboard: "Onboard",
+	"blame-map": "Blame Map",
+	newrelic: "Observability",
+	observability: "Observability",
+	"pixie-dynamic-logging": "Dynamic Logging Using Pixie"
 };
 
 export enum WebviewModals {
@@ -98,16 +105,50 @@ export enum WebviewModals {
 	ChangeUsername = "change-username",
 	ChangeWorksOn = "change-works-on",
 	ChangeTeamName = "change-team-name",
+	ChangeCompanyName = "change-company-name",
 	CreateTeam = "create-team",
+	CreateCompany = "create-company",
+	FinishReview = "finish-review",
 	TeamSetup = "team-setup",
 	Keybindings = "keybindings",
 	Notifications = "notifications",
 	ReviewSettings = "review-settings",
-	Invite = "invite"
+	Invite = "invite",
+	BlameMap = "blame-map",
+	Team = "people",
+	Profile = "profile",
+	AddNewRelicNodeJS = "add-new-relic-nodejs",
+	AddNewRelicJava = "add-new-relic-java"
+}
+
+export interface CodeErrorData {
+	// REMOVE BELOW
+	parsedStack?: any;
+	// REMOVE ABOVE
+	remote?: string;
+	commit?: string;
+	tag?: string;
+	/** caches when the last user session started  */
+	sessionStart?: number;
+	pendingRequiresConnection?: boolean;
+	pendingErrorGroupGuid?: string;
+	pendingEntityId?: string;
+	occurrenceId?: string;
+	lineIndex?: number;
+	timestamp?: number;
+	openType?: "Open in IDE Flow" | "Observability Section" | "Activity Feed";
+	multipleRepos?: boolean;
+	claimWhenConnected?: boolean;
+}
+
+export interface TeamlessContext {
+	selectedRegion?: string;
+	forceRegion?: string;
 }
 
 export interface WebviewContext {
 	currentTeamId: string;
+	sessionStart?: number;
 	currentStreamId?: string;
 	threadId?: string;
 	currentRepo?: {
@@ -120,6 +161,11 @@ export interface WebviewContext {
 		includeLatestCommit?: boolean;
 		openFirstDiff?: boolean;
 	};
+	/**
+	 * This could be a real codeErorr.id or a PENDING-${id}
+	 */
+	currentCodeErrorId?: string;
+	currentCodeErrorData?: CodeErrorData;
 	createPullRequestReviewId?: string;
 	createPullRequestOptions?: NewPullRequestBranch;
 	currentPullRequest?:
@@ -129,7 +175,11 @@ export interface WebviewContext {
 				commentId?: string;
 				/* defined if this was triggered by an external means (like an IDE button, etc.) */
 				source?: string;
+				/* details means show the full PR as the only view. sidebar-diffs means to show it as an expanded tree node */
+				view?: "details" | "sidebar-diffs";
+				previousView?: "details" | "sidebar-diffs" | undefined;
 				metadata?: any;
+				groupIndex?: string | undefined;
 		  }
 		| undefined;
 	profileUserId?: string;
@@ -142,6 +192,10 @@ export interface WebviewContext {
 	activePanel?: WebviewPanels;
 	startWorkCard?: any;
 	onboardStep: number;
+	pendingProtocolHandlerUrl?: string;
+	pendingProtocolHandlerQuery?: any;
+	forceRegion?: string;
+	__teamless__?: TeamlessContext;
 }
 
 export interface SessionState {
@@ -158,12 +212,17 @@ export interface EditorContext {
 	lastActiveFile?: string;
 	textEditorVisibleRanges?: Range[];
 	textEditorUri?: string;
+	textEditorGitSha?: string;
 	textEditorSelections?: EditorSelection[];
 	metrics?: EditorMetrics;
 	textEditorLineCount?: number;
 	visibleEditorCount?: number; // only populated (and used) by vscode
 	sidebar?: {
 		location?: SidebarLocation;
+	};
+	/* spawned process buffer text */
+	buffer?: {
+		text?: string;
 	};
 }
 
@@ -182,6 +241,11 @@ export interface WebviewConfigs {
 	environment: string;
 	isOnPrem: boolean;
 	isProductionCloud: boolean;
+	isWebmail?: boolean;
+	showGoldenSignalsInEditor?: boolean;
+	environmentHosts?: EnvironmentHost[];
+	newRelicApiUrl?: string;
+	configChangeReloadRequired?: boolean;
 }
 
 export interface IpcHost {

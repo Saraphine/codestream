@@ -299,6 +299,8 @@ export const Reply = (props: ReplyProps) => {
 	const isEditing = props.editingPostId === props.post.id;
 	const checkpoint = props.post.reviewCheckpoint;
 
+	const author = props.author || { username: "???" };
+
 	return (
 		<Root className={props.className}>
 			{props.threadId && !props.lastNestedReply && <div className="bar-left-not-last-child" />}
@@ -307,9 +309,11 @@ export const Reply = (props: ReplyProps) => {
 			<ReplyBody>
 				{hasNestedReplies && <div className="bar-left-parent" />}
 				<AuthorInfo style={{ fontWeight: 700 }}>
-					<ProfileLink id={props.author.id || ""}>
-						<Headshot size={20} person={props.author} />{" "}
-					</ProfileLink>
+					{author.id && (
+						<ProfileLink id={props.author.id || ""}>
+							<Headshot size={20} person={props.author} />{" "}
+						</ProfileLink>
+					)}
 					<span>
 						{props.author.username}
 						{emote}

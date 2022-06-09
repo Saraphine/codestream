@@ -16,7 +16,7 @@ namespace CodeStream.VisualStudio.Core.Process {
 		/// <param name="minor"></param>
 		/// <param name="build"></param>
 		/// <returns></returns>
-		public static bool EnsureVersion(string nodeExe, int major = 10, int minor = 15, int build = 3) {
+		public static bool EnsureVersion(string nodeExe, int major = 16, int minor = 13, int build = 2) {
 			var sb = new StringBuilder();
 			System.Diagnostics.Process process = null;
 			try {

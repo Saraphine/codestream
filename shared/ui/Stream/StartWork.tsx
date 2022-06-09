@@ -1,58 +1,48 @@
+import {
+	ChangeDataType,
+	CreateBranchRequestType,
+	DidChangeDataNotificationType,
+	FetchBranchCommitsStatusRequestType,
+	FetchRemoteBranchRequestType,
+	GetBranchesRequestType,
+	GetReposScmRequestType,
+	MoveThirdPartyCardRequestType,
+	ReposScm,
+	SwitchBranchRequestType,
+	UpdateThirdPartyStatusRequestType
+} from "@codestream/protocols/agent";
+import { CSMe } from "@codestream/protocols/api";
+import { OpenUrlRequestType } from "@codestream/protocols/webview";
 import { logError } from "@codestream/webview/logger";
-import { Link } from "@codestream/webview/Stream/Link";
-import React, { useState, useEffect, useMemo } from "react";
+import { connectProvider } from "@codestream/webview/store/providers/actions";
+import React, { useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { useDispatch, useSelector } from "react-redux";
-import { CodeStreamState } from "../store";
-import { HostApi } from "../webview-api";
-import Icon from "./Icon";
-import { Checkbox } from "../src/components/Checkbox";
 import styled from "styled-components";
 import { Button } from "../src/components/Button";
-import { setUserStatus, setUserPreference, connectProvider } from "./actions";
-import { setCurrentCodemark, setStartWorkCard } from "../store/context/actions";
-import { CSMe, FileStatus } from "@codestream/protocols/api";
+import { Checkbox } from "../src/components/Checkbox";
 import { InlineMenu } from "../src/components/controls/InlineMenu";
-import { useDidMount, useRect } from "../utilities/hooks";
-import {
-	GetBranchesRequestType,
-	CreateBranchRequestType,
-	SwitchBranchRequestType,
-	MoveThirdPartyCardRequestType,
-	GetReposScmRequestType,
-	ReposScm,
-	UpdateThirdPartyStatusRequestType,
-	DidChangeDataNotificationType,
-	ChangeDataType,
-	FetchRemoteBranchRequestType,
-	FetchBranchCommitsStatusRequestType
-} from "@codestream/protocols/agent";
-import IssueDropdown, { Row } from "./CrossPostIssueControls/IssueDropdown";
-import { ConfigureBranchNames } from "./ConfigureBranchNames";
-import { MarkdownText } from "./MarkdownText";
-import {
-	getProviderConfig,
-	isConnected,
-	getConnectedSharingTargets
-} from "../store/providers/reducer";
-import { SharingAttributes } from "./SharingControls";
-import { CreateCodemarkIcons } from "./CreateCodemarkIcons";
-import { PanelHeader } from "../src/components/PanelHeader";
-import ScrollBox from "./ScrollBox";
-import { WebviewPanels } from "../ipc/webview.protocol.common";
-import { ModifiedRepos } from "./ModifiedRepos";
-import Tooltip from "./Tooltip";
-import { OpenReviews } from "./OpenReviews";
-import { OpenPullRequests } from "./OpenPullRequests";
-import { Modal } from "./Modal";
-import { OpenUrlRequestType } from "@codestream/protocols/webview";
-import { isFeatureEnabled } from "../store/apiVersioning/reducer";
-import { GitTimeline, BranchLineDown, BranchCurve, BranchLineAcross, GitBranch } from "./Flow";
-import KeystrokeDispatcher from "../utilities/keystroke-dispatcher";
 import { ButtonRow } from "../src/components/Dialog";
-import { ExtensionTitle } from "./Sidebar";
-import { ScmError } from "../store/editorContext/reducer";
+import { CodeStreamState } from "../store";
+import { isFeatureEnabled } from "../store/apiVersioning/reducer";
+import { setCurrentCodemark, setStartWorkCard } from "../store/context/actions";
+import {
+	getConnectedSharingTargets,
+	getProviderConfig,
+	isConnected
+} from "../store/providers/reducer";
+import { useDidMount } from "../utilities/hooks";
+import KeystrokeDispatcher from "../utilities/keystroke-dispatcher";
+import { HostApi } from "../webview-api";
+import { setUserPreference, setUserStatus } from "./actions";
+import { ConfigureBranchNames } from "./ConfigureBranchNames";
 import { confirmPopup } from "./Confirm";
+import { BranchCurve, BranchLineAcross, BranchLineDown, GitBranch, GitTimeline } from "./Flow";
+import Icon from "./Icon";
+import { MarkdownText } from "./MarkdownText";
+import { Modal } from "./Modal";
+import { SharingAttributes } from "./SharingControls";
+import Tooltip from "./Tooltip";
 
 const StyledCheckbox = styled(Checkbox)`
 	color: var(--text-color-subtle);
@@ -439,9 +429,6 @@ export const StartWork = (props: Props) => {
 			teamName: team.name,
 			currentUserId: state.session.userId!,
 			currentUserName: state.users[state.session.userId!].username,
-			modifiedReposByTeam: currentUser.modifiedRepos
-				? currentUser.modifiedRepos[teamId]
-				: undefined,
 			webviewFocused: state.context.hasFocus,
 			textEditorUri: state.editorContext.textEditorUri,
 			branchMaxLength: settings.branchMaxLength || 40,
@@ -526,7 +513,7 @@ export const StartWork = (props: Props) => {
 		if (card && card.body) {
 			description = card.body.replace(/\[Open in IDE\].*/, "");
 			if (card.provider.id === "github*com" || card.provider.id === "github/enterprise") {
-				description = description.replace(/<!--[\s\S]*?-->/, "")
+				description = description.replace(/<!--[\s\S]*?-->/, "");
 			}
 		}
 		return description;
@@ -572,6 +559,8 @@ export const StartWork = (props: Props) => {
 			.replace(/["\\|<>\*\?:]/g, "")
 			.trim()
 			.replace(/[\s]+/g, "-")
+			.replace(/\(/g, "")
+			.replace(/\)/g, "")
 			.substr(0, derivedState.branchMaxLength);
 
 		return derivedState.branchPreserveCase ? str : str.toLowerCase();
@@ -732,9 +721,12 @@ export const StartWork = (props: Props) => {
 					uri,
 					fromBranch: fromBranch || currentBranch
 				});
-				// FIXME handle error
+
 				if (result.error) {
-					console.warn("ERROR FROM SET BRANCH: ", result.error);
+					logError(result.error, {
+						branch: branch,
+						uri: uri
+					});
 					setScmError(result.error);
 					setLoading(false);
 					return;
@@ -903,7 +895,9 @@ export const StartWork = (props: Props) => {
 					{
 						label: "Contact Support",
 						action: () => {
-							HostApi.instance.send(OpenUrlRequestType, { url: "https://help.codestream.com/" });
+							HostApi.instance.send(OpenUrlRequestType, {
+								url: "https://docs.newrelic.com/docs/codestream/"
+							});
 						}
 					}
 				]

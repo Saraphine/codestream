@@ -1,9 +1,9 @@
 "use strict";
 import { RequestType } from "vscode-languageserver-protocol";
 import { CrossPostIssueValues } from "./agent.protocol";
+import { CodeErrorPlus } from "./agent.protocol.codeErrors";
 import { CodemarkPlus } from "./agent.protocol.codemarks";
 import { ReviewPlus } from "./agent.protocol.reviews";
-import { CSMarkerLocations } from "./api.protocol";
 
 export interface ThirdPartyProviderConfig {
 	id: string;
@@ -18,6 +18,7 @@ export interface ThirdPartyProviderConfig {
 	supportsAuth?: boolean;
 	needsConfigure?: boolean;
 	needsConfigureForOnPrem?: boolean;
+	supportsOAuthOrPAT?: boolean;
 	oauthData?: { [key: string]: any };
 	scopes?: string[];
 	canFilterByAssignees?: boolean;
@@ -46,7 +47,8 @@ export const ConnectThirdPartyProviderRequestType = new RequestType<
 
 export interface ConfigureThirdPartyProviderRequest {
 	providerId: string;
-	data: { [key: string]: any };
+	data: ProviderConfigurationData;
+	verify?: boolean;
 }
 
 export interface ConfigureThirdPartyProviderResponse {}
@@ -220,6 +222,7 @@ export interface CreateThirdPartyPostRequest {
 	memberIds?: any;
 	codemark?: CodemarkPlus;
 	review?: ReviewPlus;
+	codeError?: CodeErrorPlus;
 	remotes?: string[];
 	entryPoint?: string;
 	crossPostIssueValues?: CrossPostIssueValues;
@@ -274,6 +277,12 @@ export interface FetchAssignableUsersRequest {
 	boardId: string;
 }
 
+export interface FetchAssignableUsersAutocompleteRequest {
+	providerId: string;
+	boardId: string;
+	search: string;
+}
+
 export interface FetchAssignableUsersResponse {
 	users: ThirdPartyProviderUser[];
 }
@@ -284,6 +293,13 @@ export const FetchAssignableUsersRequestType = new RequestType<
 	void,
 	void
 >("codestream/provider/cards/users");
+
+export const FetchAssignableUsersAutocompleteRequestType = new RequestType<
+	FetchAssignableUsersAutocompleteRequest,
+	FetchAssignableUsersResponse,
+	void,
+	void
+>("codestream/provider/cards/users/search");
 
 export interface CreateThirdPartyCardRequest {
 	providerId: string;
@@ -303,18 +319,17 @@ export const CreateThirdPartyCardRequestType = new RequestType<
 	void
 >("codestream/provider/cards/create");
 
-interface ThirdPartyProviderSetTokenData {
+export interface ProviderConfigurationData {
 	host?: string;
-	token: string;
-	data?: { [key: string]: any };
+	baseUrl?: string;
+	accessToken?: string;
+	pendingVerification?: boolean;
+	[key: string]: any;
 }
 
-export interface ThirdPartyProviderSetTokenRequestData extends ThirdPartyProviderSetTokenData {
-	teamId: string;
-}
-
-export interface ThirdPartyProviderSetTokenRequest extends ThirdPartyProviderSetTokenData {
+export interface ThirdPartyProviderSetInfoRequest {
 	providerId: string;
+	data: ProviderConfigurationData;
 }
 
 export interface AddEnterpriseProviderHostRequest {
@@ -332,15 +347,6 @@ export interface RemoveEnterpriseProviderHostRequest {
 	provider: string;
 	providerId: string;
 	teamId: string;
-}
-
-export interface ProviderConfigurationData {
-	host?: string;
-	baseUrl?: string;
-	token: string;
-	data?: {
-		[key: string]: any;
-	};
 }
 
 export interface FetchThirdPartyPullRequestRequest {
@@ -637,6 +643,7 @@ export interface FetchThirdPartyPullRequestRepository {
 	repoName: string;
 	pullRequest: FetchThirdPartyPullRequestPullRequest;
 	providerId: string;
+	viewerDefaultMergeMethod?: "MERGE" | "REBASE" | "SQUASH";
 	viewerPermission: "ADMIN" | "MAINTAIN" | "READ" | "TRIAGE" | "WRITE";
 	branchProtectionRules: BranchProtectionRules;
 }
@@ -846,3 +853,579 @@ export interface WebviewErrorRequest {
 export const WebviewErrorRequestType = new RequestType<WebviewErrorRequest, void, void, void>(
 	`codestream/webview/error`
 );
+
+export interface GetNewRelicErrorGroupRequest {
+	errorGroupGuid: string;
+	/** allow the lookup of errors without stack traces */
+	occurrenceId?: string;
+	/** optional, though passing it allows for parallelization */
+	entityGuid?: string;
+	src?: string;
+	timestamp?: number;
+}
+
+export interface NewRelicUser {
+	email?: string;
+	gravatar?: string;
+	id?: number;
+	name?: string;
+}
+
+export interface NewRelicErrorGroup {
+	accountId: number;
+	entityGuid: string;
+	entityType?: string; // ApmApplicationEntity |
+	entityName?: string;
+
+	occurrenceId?: string;
+
+	entityUrl?: string;
+	errorGroupUrl?: string;
+
+	entityAlertingSeverity?: "CRITICAL" | "NOT_ALERTING" | "NOT_CONFIGURED" | "WARNING";
+	/**
+	 * This is the "id" aka errorGroupGuid, NR calls this "guid"
+	 */
+	guid: string;
+	title: string;
+	message: string;
+
+	states?: string[];
+	// TODO these might not be hard-codeable
+	state?: "RESOLVED" | "IGNORED" | "UNRESOLVED" | string;
+
+	assignee?: NewRelicUser;
+
+	entity?: {
+		repo?: {
+			name: string;
+			urls: string[];
+		};
+		relationship?: {
+			error?: { message?: string };
+		};
+	};
+
+	errorTrace?: {
+		// exceptionClass: string;
+		// agentAttributes: any;
+		// intrinsicAttributes: any;
+		// message: string;
+		path: string;
+		stackTrace: {
+			filepath?: string;
+			line?: number;
+			name?: string;
+			formatted: string;
+		}[];
+	};
+
+	hostDisplayName?: string;
+	transactionName?: string;
+
+	hasStackTrace?: boolean;
+
+	attributes?: {
+		[key: string]: {
+			type: "timestamp" | "string" | "number";
+			value: string | number | boolean;
+		};
+	};
+}
+
+export interface GetNewRelicErrorGroupResponse {
+	errorGroup?: NewRelicErrorGroup;
+	accountId: number;
+	error?: {
+		message: string;
+		details?: {
+			settings?: { key: string; value: any }[] | undefined;
+		};
+	};
+}
+
+export const GetNewRelicErrorGroupRequestType = new RequestType<
+	GetNewRelicErrorGroupRequest,
+	GetNewRelicErrorGroupResponse,
+	void,
+	void
+>("codestream/newrelic/errorGroup");
+
+export interface GetNewRelicAssigneesRequest {}
+export interface GetNewRelicAssigneesResponse {
+	users: any[];
+}
+export const GetNewRelicAssigneesRequestType = new RequestType<
+	GetNewRelicAssigneesRequest,
+	GetNewRelicAssigneesResponse,
+	void,
+	void
+>("codestream/newrelic/assignees");
+
+export interface NewRelicAccount {
+	id: number;
+	name: string;
+}
+
+export interface GetNewRelicAccountsResponse {
+	accounts: NewRelicAccount[];
+}
+export const GetNewRelicAccountsRequestType = new RequestType<
+	void,
+	GetNewRelicAccountsResponse,
+	void,
+	void
+>("codestream/newrelic/accounts");
+
+export interface GetObservabilityErrorsRequest {
+	filters?: { repoId: string; entityGuid?: string }[];
+}
+
+export interface ObservabilityErrorCore {
+	entityId: string;
+	errorClass: string;
+	message: string;
+	errorGroupGuid: string;
+	errorGroupUrl?: string;
+}
+
+export interface ObservabilityError extends ObservabilityErrorCore {
+	appName: string;
+	remote: string;
+	occurrenceId: string;
+	count: number;
+	lastOccurrence: number;
+}
+
+export interface ObservabilityRepoError {
+	repoId: string;
+	repoName: string;
+	errors: ObservabilityError[];
+}
+
+export interface ObservabilityRepo {
+	repoId: string;
+	repoName: string;
+	repoRemote: string;
+	hasRepoAssociation?: boolean;
+	entityAccounts: EntityAccount[];
+}
+
+export interface GetObservabilityErrorsResponse {
+	repos: ObservabilityRepoError[];
+}
+export const GetObservabilityErrorsRequestType = new RequestType<
+	GetObservabilityErrorsRequest,
+	GetObservabilityErrorsResponse,
+	void,
+	void
+>("codestream/newrelic/errors");
+
+export interface GetObservabilityReposRequest {
+	filters?: { repoId: string; entityGuid?: string }[];
+}
+
+export interface EntityAccount {
+	alertSeverity?: string;
+	accountId: number;
+	accountName: string;
+	entityGuid: string;
+	entityName: string;
+	tags: {
+		key: string;
+		values: string[];
+	}[];
+}
+
+export interface GetObservabilityReposResponse {
+	repos: ObservabilityRepo[];
+}
+export const GetObservabilityReposRequestType = new RequestType<
+	GetObservabilityReposRequest,
+	GetObservabilityReposResponse,
+	void,
+	void
+>("codestream/newrelic/repos");
+
+export interface GetObservabilityEntitiesRequest {
+	appName?: string;
+	appNames?: string[];
+	resetCache?: boolean;
+}
+export interface GetObservabilityEntitiesResponse {
+	entities: { guid: string; name: string }[];
+}
+export const GetObservabilityEntitiesRequestType = new RequestType<
+	GetObservabilityEntitiesRequest,
+	GetObservabilityEntitiesResponse,
+	void,
+	void
+>("codestream/newrelic/entities");
+
+export interface GetObservabilityErrorAssignmentsRequest {}
+export interface GetObservabilityErrorAssignmentsResponse {
+	items: ObservabilityErrorCore[];
+}
+export const GetObservabilityErrorAssignmentsRequestType = new RequestType<
+	GetObservabilityErrorAssignmentsRequest,
+	GetObservabilityErrorAssignmentsResponse,
+	void,
+	void
+>("codestream/newrelic/assignments");
+
+export interface GetObservabilityErrorGroupMetadataRequest {
+	errorGroupGuid: string;
+}
+export interface GetObservabilityErrorGroupMetadataResponse {
+	occurrenceId?: string;
+	entityId?: string;
+	remote?: string;
+}
+
+export const GetObservabilityErrorGroupMetadataRequestType = new RequestType<
+	GetObservabilityErrorGroupMetadataRequest,
+	GetObservabilityErrorGroupMetadataResponse,
+	void,
+	void
+>("codestream/newrelic/errorGroup/metadata");
+
+export interface FileLevelTelemetryRequestOptions {
+	includeThroughput?: boolean;
+	includeAverageDuration?: boolean;
+	includeErrorRate?: boolean;
+}
+
+export interface FunctionLocator {
+	// example CodeStream.VisualStudio.CodeLens.VisualStudioConnection.Refresh
+	namespace?: string; // CodeStream.VisualStudio.CodeLens
+	// className?: string; // VisualStudioConnection
+	functionName?: string; // Refresh
+}
+
+export interface GetFileLevelTelemetryRequest {
+	filePath: string;
+	languageId: string;
+	/** if true, this request will reset the cache */
+	resetCache?: boolean;
+	locator?: FunctionLocator;
+	options?: FileLevelTelemetryRequestOptions;
+}
+
+export interface GetMethodLevelTelemetryRequest {
+	/** CodeStream repoId */
+	repoId: string;
+	/** entity id of the NewRelic entity */
+	newRelicEntityGuid: string;
+	/** contains the specific formatting of a metricTimesliceName for a golden metric type */
+	metricTimesliceNameMapping: MetricTimesliceNameMapping;
+}
+
+export type MetricTimesliceNameMapping = {
+	/**
+	 * duration
+	 */
+	d: string;
+	/**
+	 * throughput
+	 */
+	t: string;
+	/**
+	 * error
+	 */
+	e: string;
+};
+
+export interface GetFileLevelTelemetryResponse {
+	repo: {
+		id: string;
+		name: string;
+		remote: string;
+	};
+	isConnected?: boolean;
+	throughput?: {
+		requestsPerMinute: any;
+		namespace?: string;
+		className?: string;
+		functionName: string;
+		metricTimesliceName: string;
+	}[];
+	averageDuration?: {
+		averageDuration: any;
+		namespace?: string;
+		className?: string;
+		functionName: string;
+		metricTimesliceName: string;
+	}[];
+	errorRate?: {
+		errorsPerMinute: any;
+		namespace?: string;
+		className?: string;
+		functionName: string;
+		metricTimesliceName: string;
+	}[];
+	lastUpdateDate?: number;
+	hasAnyData?: boolean;
+	sinceDateFormatted?: string;
+	newRelicAccountId?: number;
+	newRelicEntityGuid?: string;
+	newRelicEntityName?: string;
+	newRelicUrl?: string;
+	newRelicEntityAccounts: EntityAccount[];
+	newRelicAlertSeverity?: string;
+	codeNamespace?: string;
+	relativeFilePath: string;
+	error?: {
+		message?: string;
+		type?: "NOT_CONNECTED" | "NOT_ASSOCIATED";
+	};
+}
+
+export interface GetMethodLevelTelemetryResponse {
+	newRelicEntityGuid: string;
+	newRelicUrl?: string;
+	goldenMetrics?: any;
+	newRelicAlertSeverity?: string;
+	newRelicEntityAccounts: EntityAccount[];
+	newRelicEntityName: string;
+}
+
+export const GetFileLevelTelemetryRequestType = new RequestType<
+	GetFileLevelTelemetryRequest,
+	GetFileLevelTelemetryResponse,
+	void,
+	void
+>("codestream/newrelic/fileLevelTelemetry");
+
+export const GetMethodLevelTelemetryRequestType = new RequestType<
+	GetMethodLevelTelemetryRequest,
+	GetMethodLevelTelemetryResponse,
+	void,
+	void
+>("codestream/newrelic/methodLevelMethodTelemetry");
+
+export interface CrashOrException {
+	message?: string;
+	stackTrace: StackTrace;
+}
+
+export interface EntityCrash extends CrashOrException {}
+
+export interface EntityException extends CrashOrException {}
+
+interface StackTrace {
+	frames: { filepath?: string; line?: number; name?: string; formatted: string }[];
+}
+
+export interface ErrorGroupStateType {
+	type: string;
+}
+
+export interface ErrorGroupResponse {
+	actor: {
+		account: {
+			name: string;
+		};
+		entity: {
+			alertSeverity: "CRITICAL" | "NOT_ALERTING" | "NOT_CONFIGURED" | "WARNING" | undefined;
+			name: string;
+			exception?: EntityException;
+			crash?: EntityCrash;
+			relatedEntities: {
+				results: any[];
+			};
+		};
+		errorsInbox: {
+			errorGroupStateTypes?: ErrorGroupStateType[];
+			errorGroups: {
+				results: ErrorGroup[];
+			};
+		};
+	};
+}
+
+export interface StackTraceResponse {
+	actor: {
+		entity: {
+			entityType: string;
+			// we will have an exception or a crash
+			exception?: EntityException;
+			crash?: EntityCrash;
+		};
+	};
+}
+
+export type EntityType =
+	| "BROWSER_APPLICATION_ENTITY"
+	| "GENERIC_ENTITY"
+	| "MOBILE_APPLICATION_ENTITY";
+
+export interface Entity {
+	account?: {
+		name: string;
+		id: number;
+	};
+	domain?: string;
+	alertSeverity?: string;
+	guid: string;
+	name: string;
+	type?: "APPLICATION" | "REPOSITORY";
+	entityType?: EntityType;
+	tags?: {
+		key: string;
+		values: string[];
+	}[];
+}
+
+export interface ErrorGroupsResponse {
+	actor: {
+		errorsInbox: {
+			errorGroups: {
+				results: {
+					url: string;
+					state: string;
+					name: string;
+					message: string;
+					id: string;
+					entityGuid: string;
+				}[];
+			};
+		};
+	};
+}
+
+export interface RelatedEntity {
+	source: {
+		entity: Entity;
+	};
+	target: {
+		entity: Entity;
+	};
+	type: "BUILT_FROM";
+}
+
+export interface EntitySearchResponse {
+	actor: {
+		entitySearch: {
+			results: {
+				entities: Entity[];
+			};
+		};
+	};
+}
+
+export interface BuiltFromResult {
+	name?: string;
+	url?: string;
+	error?: {
+		message?: string;
+	};
+}
+
+export interface ErrorGroup {
+	id: string;
+	state?: string;
+	message: string;
+	name: string;
+	entityGuid: string;
+	url: string;
+	eventsQuery?: string;
+	assignment?: {
+		email: string;
+		userInfo: {
+			gravatar: string;
+			id: number;
+			name: string;
+		};
+	};
+}
+
+export interface ProviderGetForkedReposResponse {
+	parent?: {
+		defaultBranchRef?: {
+			name: string;
+		};
+		forks?: any[];
+		id?: any;
+		name?: string;
+		nameWithOwner?: string;
+		owner?: string;
+		parent?: {
+			id?: string;
+			name?: string;
+			nameWithOwner?: string;
+		};
+		refs?: {
+			nodes?: any[];
+		};
+		url?: string;
+	};
+	forks?: {
+		defaultBranchRef?: {
+			name: string;
+		};
+		id?: any;
+		name?: string;
+		nameWithOwner?: string;
+		owner?: string;
+		refs?: {
+			nodes?: any[];
+		};
+	}[];
+	self?: {
+		defaultBranchRef?: {
+			name: string;
+		};
+		forks?: any[];
+		id?: any;
+		name?: string;
+		nameWithOwner?: string;
+		owner?: string;
+		parent?: {
+			id?: string;
+			name?: string;
+			nameWithOwner?: string;
+		};
+		refs?: {
+			nodes?: any[];
+		};
+		url?: string;
+	};
+	error?: { message?: string; type: string };
+}
+
+export interface GoldenMetricsQueryResult {
+	actor: {
+		entity: {
+			goldenMetrics: {
+				metrics: {
+					query: string;
+					title: string;
+				}[];
+			};
+		};
+	};
+}
+
+export interface GoldenMetricsResult {
+	query: string;
+	title: string;
+	result: {
+		beginTimeSeconds: number;
+		endDate: Date;
+		endTimeSeconds: number;
+		"Error %"?: string;
+		"Error rate"?: string;
+		"Response time (ms)": string;
+		Throughput: string;
+	}[];
+}
+
+export interface RelatedEntityByRepositoryGuidsResult {
+	actor: {
+		entities: {
+			relatedEntities: {
+				results: RelatedEntity[];
+			};
+		}[];
+	};
+}

@@ -45,7 +45,11 @@ const positionStyleMap: { [key: string]: string } = {
 };
 
 const buildDecoration = (position: string, type: string, color: string, _status: string) => {
-	const pngPath = Container.context.asAbsolutePath(`assets/images/marker-${type}-${color}.png`);
+	let markercolor = color;
+	if (type === "prcomment") markercolor = "green";
+	const pngPath = Container.context.asAbsolutePath(
+		`assets/images/marker-${type}-${markercolor}.png`
+	);
 	try {
 		const pngBase64 = fs.readFileSync(pngPath, { encoding: "base64" });
 		const pngInlineUrl = `data:image/png;base64,${pngBase64}`;
@@ -255,6 +259,7 @@ export class CodemarkDecorationProvider implements HoverProvider, Disposable {
 		if (!this._suspended) {
 			subscriptions.push(languages.registerHoverProvider({ scheme: "file" }, this));
 			subscriptions.push(languages.registerHoverProvider({ scheme: "codestream-diff" }, this));
+			subscriptions.push(languages.registerHoverProvider({ scheme: "codestream-git" }, this));
 		}
 
 		this._enabledDisposable = Disposable.from(...subscriptions);
@@ -280,14 +285,20 @@ export class CodemarkDecorationProvider implements HoverProvider, Disposable {
 	private onMarkersChanged(e: TextDocumentMarkersChangedEvent) {
 		const uri = e.uri.toString();
 		this._markersCache.delete(uri);
+		const fsPath = Uri.parse(uri).fsPath;
+		for (const key of this._markersCache.keys()) {
+			const keyFsPath = Uri.parse(key).fsPath;
+			if (keyFsPath === fsPath) {
+				this._markersCache.delete(key);
+			}
+		}
 
-		const editors = this.getApplicableVisibleEditors();
-		if (editors.length === 0) return;
-
-		const editor = editors.find(e => e.document.uri.toString() === uri);
-		if (editor === undefined) return;
-
-		this.apply(editor);
+		const editors = this.getApplicableVisibleEditors().filter(
+			e => e.document.uri.fsPath === fsPath
+		);
+		for (const editor of editors) {
+			this.apply(editor);
+		}
 	}
 
 	private onPullRequestCommentsChanged(_e: PullRequestCommentsChangedEvent) {
@@ -580,7 +591,8 @@ export class CodemarkDecorationProvider implements HoverProvider, Disposable {
 
 	private async getMarkersCore(uri: Uri) {
 		try {
-			const resp = await Container.agent.documentMarkers.fetch(uri);
+			const { fileUri, sha } = csUri.Uris.getFileUriAndSha(uri);
+			const resp = await Container.agent.documentMarkers.fetch(fileUri, sha);
 			if (resp === undefined) return emptyArray;
 
 			return resp.markers.map(m => new DocMarker(Container.session, m));
@@ -593,7 +605,9 @@ export class CodemarkDecorationProvider implements HoverProvider, Disposable {
 	private isApplicableEditor(editor: TextEditor | undefined) {
 		if (!editor || !editor.document) return false;
 
-		if (editor.document.uri.scheme === "file") return true;
+		if (editor.document.uri.scheme === "file" || editor.document.uri.scheme === "codestream-git") {
+			return true;
+		}
 
 		// check for review diff
 		const parsedUri = Strings.parseCSReviewDiffUrl(editor.document.uri.toString());

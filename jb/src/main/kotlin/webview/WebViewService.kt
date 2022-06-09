@@ -9,6 +9,7 @@ import com.codestream.protocols.webview.WebViewNotification
 import com.codestream.sessionService
 import com.codestream.settings.ApplicationSettingsService
 import com.codestream.settingsService
+import com.codestream.telemetryService
 import com.github.salomonbrys.kotson.jsonObject
 import com.google.gson.JsonElement
 import com.intellij.openapi.Disposable
@@ -22,13 +23,15 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
 import org.apache.commons.io.FileUtils
+import org.eclipse.lsp4j.jsonrpc.messages.ResponseError
 import java.io.File
-import java.nio.charset.Charset
 import java.util.concurrent.CompletableFuture
 import javax.swing.UIManager
 
+private const val WEBVIEW_TEMPLATE_HTML = "webview-template.html"
+private const val WEBVIEW_HTML = "webview.html"
+
 class WebViewService(val project: Project) : Disposable {
-    private val utf8 = Charset.forName("UTF-8")
     private val logger = Logger.getInstance(WebViewService::class.java)
     private val router = WebViewRouter(project)
     private val webViewCreation = CompletableFuture<Unit>()
@@ -37,27 +40,27 @@ class WebViewService(val project: Project) : Disposable {
 
     lateinit var webView: WebView
 
-    private val htmlFile: File get() = if (WEBVIEW_PATH != null) {
-        File(WEBVIEW_PATH)
+    private val htmlTemplateFile: File get() = if (WEBVIEW_PATH != null) {
+        File(WEBVIEW_PATH, WEBVIEW_TEMPLATE_HTML)
     } else {
         extractedHtmlFile
     }
 
+    private val htmlFile: File get() = File(htmlTemplateFile.parent, WEBVIEW_HTML)
+
     init {
         logger.info("Initializing WebViewService for project ${project.basePath}")
-        ApplicationManager.getApplication().invokeLater {
-            GlobalScope.launch {
-                webView = createWebView(router)
-                webViewCreation.complete(Unit)
-            }
+        GlobalScope.launch {
+            webView = createWebView(router)
+            webViewCreation.complete(Unit)
         }
 
         extractAssets()
-        applyStylesheet()
+        generateHtmlFile()
 
         UIManager.addPropertyChangeListener {
             if (it.propertyName == "lookAndFeel") {
-                applyStylesheet()
+                generateHtmlFile()
                 webView.loadUrl(htmlFile.url)
             }
         }
@@ -78,15 +81,13 @@ class WebViewService(val project: Project) : Disposable {
         if (resetContext) {
             project.settingsService?.clearWebViewContext()
         }
-        applyStylesheet()
-        ApplicationManager.getApplication().invokeLater {
-            GlobalScope.launch {
-                try {
-                    webViewCreation.await()
-                    webView.loadUrl(htmlFile.url)
-                } catch (e: Exception) {
-                    logger.error(e)
-                }
+        generateHtmlFile()
+        GlobalScope.launch {
+            try {
+                webViewCreation.await()
+                webView.loadUrl(htmlFile.url)
+            } catch (e: Exception) {
+                logger.error(e)
             }
         }
     }
@@ -99,7 +100,7 @@ class WebViewService(val project: Project) : Disposable {
         tempDir = createTempDir("codestream")
         logger.info("Extracting webview to ${tempDir.absolutePath}")
         tempDir.deleteOnExit()
-        extractedHtmlFile = File(tempDir, "webview.html")
+        extractedHtmlFile = File(tempDir, WEBVIEW_TEMPLATE_HTML)
 
         FileUtils.copyToFile(javaClass.getResourceAsStream("/webview/webview.js"), File(tempDir, "webview.js"))
         FileUtils.copyToFile(
@@ -107,23 +108,54 @@ class WebViewService(val project: Project) : Disposable {
             File(tempDir, "webview-data.js")
         )
         FileUtils.copyToFile(javaClass.getResourceAsStream("/webview/webview.css"), File(tempDir, "webview.css"))
-        FileUtils.copyToFile(javaClass.getResourceAsStream("/webview/webview.html"), File(tempDir, "webview.html"))
+        FileUtils.copyToFile(javaClass.getResourceAsStream("/webview/${WEBVIEW_TEMPLATE_HTML}"), File(tempDir,
+            WEBVIEW_TEMPLATE_HTML
+        ))
     }
 
-    private fun applyStylesheet() {
+    private fun generateHtmlFile() {
+        val htmlContent = FileUtils.readFileToString(htmlTemplateFile, Charsets.UTF_8)
+            .let { injectStylesheet(it) }
+            .let { injectTelemetryScript(it) }
+
+        FileUtils.write(htmlFile, htmlContent, Charsets.UTF_8)
+    }
+
+    private fun injectStylesheet(html: String): String {
         val theme = WebViewTheme.build()
-        val htmlContent = FileUtils.readFileToString(htmlFile, utf8)
+        return html
             .replace("{bodyClass}", theme.name)
-            .replace("<style id=\"theme\"></style>", "<style id=\"theme\">${theme.stylesheet}</style>")
-        FileUtils.write(htmlFile, htmlContent, utf8)
+            .replace("{csStyle}", theme.stylesheet)
+
+    }
+    private fun injectTelemetryScript(html: String): String {
+        val template = javaClass.getResource("/webview/newrelic-browser.js")?.readText()?.trim() ?: ""
+        val script = project.telemetryService?.telemetryOptions?.webviewOptions()?.let {
+            template
+                .replace("{{accountID}}", it.accountId)
+                .replace("{{applicationID}}", it.webviewAppId)
+                .replace("{{agentID}}", it.webviewAgentId)
+                .replace("{{licenseKey}}", it.browserIngestKey)
+        } ?: ""
+        return html
+            .replace("{telemetryScript}", script)
     }
 
-    fun postResponse(id: String, params: Any?, error: String? = null) {
-        val message = jsonObject(
-            "id" to id,
-            "params" to gson.toJsonTree(params),
-            "error" to error
-        )
+    fun postResponse(id: String, params: Any?, error: String? = null, responseError: ResponseError? = null) {
+        val message = if (responseError != null) {
+            jsonObject(
+                "id" to id,
+                "params" to gson.toJsonTree(params),
+                "error" to gson.toJsonTree(responseError)
+            )
+        } else {
+            jsonObject(
+                "id" to id,
+                "params" to gson.toJsonTree(params),
+                "error" to error
+            )
+        }
+
         postMessage(message, true)
     }
 
@@ -150,7 +182,9 @@ class WebViewService(val project: Project) : Disposable {
     }
 
     override fun dispose() {
-        webView.dispose()
+        try {
+            webView.dispose()
+        } catch (ignore: Exception) {}
     }
 
     private suspend fun createWebView(router: WebViewRouter): WebView {
@@ -158,21 +192,26 @@ class WebViewService(val project: Project) : Disposable {
         return try {
             if (!ENV_DISABLE_JCEF && appSettings.jcef && JBCefApp.isSupported()) {
                 logger.info("JCEF enabled")
-                val jbCefBrowser = JBCefBrowser()
-                JBCefWebView(jbCefBrowser, router).also {
+                val jbCefBrowserFuture = CompletableFuture<JBCefBrowser>()
+                ApplicationManager.getApplication().invokeLater {
+                    val jbCefBrowser = JBCefBrowser()
+                    jbCefBrowserFuture.complete(jbCefBrowser)
+                }
+                JBCefWebView(jbCefBrowserFuture.await(), router).also {
                     webviewTelemetry("JCEF")
                 }
             } else {
                 logger.info("JCEF disabled - falling back to JxBrowser")
                 val engine = ServiceManager.getService(JxBrowserEngineService::class.java)
-                JxBrowserWebView(engine.newBrowser(), router).also {
+                val browser = engine.newBrowser()
+
+                JxBrowserWebView(browser, router).also {
                     if (JBCefApp.isSupported()) {
                         webviewTelemetry("JxBrowser - user selection")
                     } else {
                         webviewTelemetry("JxBrowser - JCEF not supported")
                     }
                 }
-
             }
         } catch (ex: Exception) {
             logger.warn("Error initializing JCEF - falling back to JxBrowser", ex)
@@ -195,7 +234,6 @@ class WebViewService(val project: Project) : Disposable {
             }
         }
     }
-
 }
 
 private val File.url: String

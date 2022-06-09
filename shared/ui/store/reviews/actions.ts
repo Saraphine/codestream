@@ -156,8 +156,8 @@ export const createReview = (attributes: NewReviewAttributes) => async (
 			return result;
 		}
 	} catch (error) {
-		logError("Error creating a review", { message: error.toString() });
-		throw { reason: "create", message: error.toString() } as CreateReviewError;
+		logError("Error creating a review", error);
+		throw { reason: "create", ...error } as CreateReviewError;
 	}
 };
 
@@ -275,3 +275,8 @@ export const closeDiff = () => async dispatch => {
 	// if (response.success)
 	// return dispatch()
 };
+
+export interface NewCodeErrorAttributes {
+	title: string;
+	stackTrace: string;
+}

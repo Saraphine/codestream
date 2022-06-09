@@ -2,10 +2,17 @@
 import { ReviewDiffContentProvider } from "providers/diffContentProvider";
 import { ExtensionContext, workspace } from "vscode";
 import { WebviewLike } from "webviews/webviewLike";
+import { GitContentProvider } from "providers/gitContentProvider";
+import { InstrumentableCodeLensController } from "controllers/instrumentableCodeLensController";
 import { BaseAgentOptions, CodeStreamAgentConnection } from "./agent/agentConnection";
 import { CodeStreamSession } from "./api/session";
 import { Commands } from "./commands";
-import { Config, configuration, ConfigurationWillChangeEvent } from "./configuration";
+import {
+	Config,
+	configuration,
+	ConfigurationWillChangeEvent,
+	ConfigSettingsNeedingReload
+} from "./configuration";
 import { NotificationsController } from "./controllers/notificationsController";
 import { StatusBarController } from "./controllers/statusBarController";
 import { WebviewController } from "./controllers/webviewController";
@@ -19,14 +26,18 @@ import { SetServerUrlRequestType } from "./protocols/agent/agent.protocol";
 // import { WebviewSidebarActivator } from "./views/webviewSidebarActivator";
 
 export class Container {
+	static telemetryOptions?: TelemetryOptions;
+
 	static async initialize(
 		context: ExtensionContext,
 		config: Config,
 		agentOptions: BaseAgentOptions,
-		webviewLike?: WebviewLike
+		webviewLike?: WebviewLike,
+		telemetryOptions?: TelemetryOptions
 	) {
 		this._context = context;
 		this._config = config;
+		Container.telemetryOptions = telemetryOptions;
 
 		this._version = agentOptions.extension.version;
 		this._versionBuild = agentOptions.extension.build;
@@ -40,14 +51,16 @@ export class Container {
 		});
 
 		context.subscriptions.push((this._session = new CodeStreamSession(config.serverUrl)));
-
 		context.subscriptions.push((this._notifications = new NotificationsController()));
-
 		context.subscriptions.push((this._commands = new Commands()));
 		context.subscriptions.push((this._codeActions = new CodeStreamCodeActionProvider()));
 		context.subscriptions.push((this._codeLens = new CodemarkCodeLensProvider()));
 		context.subscriptions.push((this._diffContents = new ReviewDiffContentProvider()));
+		context.subscriptions.push((this._gitContents = new GitContentProvider()));
 		context.subscriptions.push((this._markerDecorations = new CodemarkDecorationProvider()));
+		context.subscriptions.push(
+			(this._instrumentableCodeLensController = new InstrumentableCodeLensController())
+		);
 		context.subscriptions.push(new CodemarkPatchContentProvider());
 		context.subscriptions.push((this._selectionDecoration = new SelectionDecorationProvider()));
 		context.subscriptions.push((this._statusBar = new StatusBarController()));
@@ -67,9 +80,12 @@ export class Container {
 		}
 	];
 
-	static setServerUrl(serverUrl: string, disableStrictSSL: boolean) {
-		this._session.setServerUrl(serverUrl);
-		this._agent.sendRequest(SetServerUrlRequestType, { serverUrl, disableStrictSSL });
+	static setServerUrl(serverUrl: string, disableStrictSSL: boolean, environment?: string) {
+		this._pendingServerUrl = serverUrl;
+		this._session.setServerUrl(serverUrl, environment);
+		this._agent.sendRequest(SetServerUrlRequestType, { serverUrl, disableStrictSSL, environment });
+		this._agent.setServerUrl(serverUrl);
+		this._statusBar.update();
 	}
 
 	private static onConfigurationChanging(e: ConfigurationWillChangeEvent) {
@@ -77,6 +93,22 @@ export class Container {
 
 		if (configuration.changed(e.change, configuration.name("traceLevel").value)) {
 			Logger.level = configuration.get<TraceLevel>(configuration.name("traceLevel").value);
+		}
+
+		const needReload = ConfigSettingsNeedingReload.find(config => {
+			const configName = configuration.name(config as keyof Config).value;
+			const isChanging = configuration.changed(e.change, configName);
+			const changedTo = configuration.get<string>(configName);
+			const changingToPendingServerUrl =
+				configName === "serverUrl" && changedTo === this._pendingServerUrl;
+			if (changingToPendingServerUrl) {
+				delete this._pendingServerUrl;
+			}
+			return isChanging && !changingToPendingServerUrl;
+		});
+		if (needReload) {
+			Logger.log(`Config value ${needReload} changed, prompting IDE reload...`);
+			this._webview!.onConfigChangeReload();
 		}
 	}
 
@@ -132,6 +164,11 @@ export class Container {
 		return this._diffContents;
 	}
 
+	private static _gitContents: GitContentProvider;
+	static get gitContents() {
+		return this._gitContents;
+	}
+
 	private static _context: ExtensionContext;
 	static get context() {
 		return this._context;
@@ -140,6 +177,11 @@ export class Container {
 	private static _markerDecorations: CodemarkDecorationProvider;
 	static get markerDecorations() {
 		return this._markerDecorations;
+	}
+
+	private static _instrumentableCodeLensController: InstrumentableCodeLensController;
+	static get instrumentableCodeLensController() {
+		return this._instrumentableCodeLensController;
 	}
 
 	private static _notifications: NotificationsController;
@@ -181,4 +223,19 @@ export class Container {
 	static get webview() {
 		return this._webview;
 	}
+
+	private static _pendingServerUrl: string | undefined;
+	static setPendingServerUrl(url: string) {
+		this._pendingServerUrl = url;
+	}
+}
+
+export interface TelemetryOptions {
+	error?: string;
+	telemetryEndpoint?: string;
+	browserIngestKey?: string;
+	licenseIngestKey?: string;
+	accountId?: string;
+	webviewAgentId?: string;
+	webviewAppId?: string;
 }

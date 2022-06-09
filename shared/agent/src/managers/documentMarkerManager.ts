@@ -43,6 +43,7 @@ import {
 } from "../protocol/api.protocol";
 import { Functions, log, lsp, lspHandler, Strings } from "../system";
 import * as csUri from "../system/uri";
+import { GetLocationsResult } from "./markerLocationManager";
 import { compareRemotes } from "./markersBuilder";
 import { ReviewsManager } from "./reviewsManager";
 
@@ -260,12 +261,11 @@ export class DocumentMarkerManager {
 
 	private async getFilters() {
 		const { users } = SessionContainer.instance();
-		const preferences = (await users.getMe()).user.preferences;
+		const preferences = (await users.getMe()).preferences;
 		if (!preferences) return {};
 
 		return {
 			excludeArchived: !preferences.codemarksShowArchived,
-			excludePRs: !preferences.codemarksShowPRComments,
 			excludeResolved: !!preferences.codemarksHideResolved,
 			excludeReviews: !!preferences.codemarksHideReviews
 		};
@@ -327,7 +327,7 @@ export class DocumentMarkerManager {
 						summary = summary.replace(emojiRegex, (s: string, code: string) => emojiMap[code] || s);
 					}
 
-					let gotoLine = comment.position.newLine;
+					const gotoLine = comment.position.newLine;
 
 					const location: CSLocationArray = [gotoLine, 0, gotoLine, 0, undefined];
 					documentMarkers.push({
@@ -512,20 +512,7 @@ export class DocumentMarkerManager {
 
 			const { markers, markersNotLocated } = await this.getCodemarkDocumentMarkers(request);
 
-			let prMarkers: DocumentMarker[] = [];
 			const filters = await this.getFilters();
-			if (!filters.excludePRs) {
-				try {
-					const stream = await files.getByPath(filePath);
-					prMarkers = await this.getPullRequestDocumentMarkers({
-						uri: documentUri,
-						streamId: stream?.id
-					});
-				} catch (ex) {
-					Logger.error(ex, cc);
-					debugger;
-				}
-			}
 
 			const filteredMarkers = request.applyFilters
 				? markers.filter(marker => {
@@ -539,7 +526,7 @@ export class DocumentMarkerManager {
 				: markers;
 
 			return {
-				markers: [...filteredMarkers, ...prMarkers],
+				markers: filteredMarkers,
 				markersNotLocated
 			};
 		} catch (ex) {
@@ -558,6 +545,10 @@ export class DocumentMarkerManager {
 		const { documents } = Container.instance();
 		const doc = documents.get(documentId.uri);
 		const documentUri = URI.parse(documentId.uri);
+
+		if (request.gitSha) {
+			return this.getCodemarkDocumentMarkersCore(request);
+		}
 
 		const cached = this._codemarkDocumentMarkersCache.get(documentUri.toString());
 		if (doc && cached && cached.documentVersion === doc?.version) {
@@ -581,7 +572,8 @@ export class DocumentMarkerManager {
 	}
 
 	private async getCodemarkDocumentMarkersCore({
-		textDocument: documentId
+		textDocument: documentId,
+		gitSha
 	}: FetchDocumentMarkersRequest): Promise<FetchDocumentMarkersResponse> {
 		const cc = Logger.getCorrelationContext();
 
@@ -595,6 +587,7 @@ export class DocumentMarkerManager {
 			posts
 		} = SessionContainer.instance();
 		const { documents } = Container.instance();
+		const { git } = SessionContainer.instance();
 		const doc = documents.get(documentId.uri);
 		const documentUri = URI.parse(documentId.uri);
 
@@ -616,11 +609,22 @@ export class DocumentMarkerManager {
 				`MARKERS: found ${markersForDocument.length} markers - retrieving current locations`
 			);
 
-			const { locations, missingLocations } = await markerLocations.getCurrentLocations(
-				documentId.uri,
-				stream.id,
-				markersForDocument
-			);
+			let getLocationsResult: GetLocationsResult;
+			if (gitSha) {
+				getLocationsResult = await markerLocations.getCommitLocations(
+					filePath,
+					gitSha,
+					stream.id,
+					markersForDocument
+				);
+			} else {
+				getLocationsResult = await markerLocations.getCurrentLocations(
+					documentId.uri,
+					stream.id,
+					markersForDocument
+				);
+			}
+			const { locations, missingLocations } = getLocationsResult;
 
 			const usersById = new Map<string, CSUser>();
 
@@ -666,12 +670,14 @@ export class DocumentMarkerManager {
 					}
 
 					if (!locations[marker.id]) {
-						const currentBufferText = doc && doc.getText();
-						if (currentBufferText) {
+						const contents = gitSha
+							? await git.getFileContentForRevision(documentId.uri, gitSha)
+							: doc && doc.getText();
+						if (contents) {
 							const line = await findBestMatchingLine(
-								currentBufferText,
+								contents,
 								marker.code,
-								marker.locationWhenCreated[0]
+								marker.locationWhenCreated ? marker.locationWhenCreated[0] : 0
 							);
 							if (line > 0) {
 								locations[marker.id] = {
@@ -747,56 +753,6 @@ export class DocumentMarkerManager {
 	}
 
 	@log()
-	async getPullRequestDocumentMarkers({
-		uri,
-		streamId
-	}: {
-		uri: URI;
-		streamId: string | undefined;
-	}): Promise<DocumentMarker[]> {
-		const { providerRegistry, users } = SessionContainer.instance();
-		const { user } = await users.getMe();
-		const providers = providerRegistry.getConnectedProviders(
-			user,
-			(p): p is ThirdPartyIssueProvider & ThirdPartyProviderSupportsPullRequests => {
-				const thirdPartyIssueProvider = p as ThirdPartyIssueProvider;
-				return (
-					thirdPartyIssueProvider &&
-					typeof thirdPartyIssueProvider.supportsPullRequests === "function" &&
-					thirdPartyIssueProvider.supportsPullRequests()
-				);
-			}
-		);
-		if (providers.length === 0) return emptyArray;
-
-		const { git } = SessionContainer.instance();
-		const repo = await git.getRepositoryByFilePath(uri.fsPath);
-		if (!repo) {
-			return [];
-		}
-
-		const markers = [];
-		const requests = providers.map(p =>
-			p.getPullRequestDocumentMarkers({
-				uri: uri,
-				repoId: repo!.id,
-				streamId: streamId
-			})
-		);
-
-		for await (const response of requests) {
-			markers.push(...response);
-		}
-
-		// // If we have any markers, notify the webview, so it can request them again
-		// if (markers.length !== 0) {
-		// 	this.fireDidChangeDocumentMarkers(uri.toString(true), "codemarks");
-		// }
-
-		return markers;
-	}
-
-	@log()
 	@lspHandler(GetDocumentFromKeyBindingRequestType)
 	async getDocumentFromKeyBinding({
 		key
@@ -841,15 +797,8 @@ export class DocumentMarkerManager {
 		}
 
 		const repo = await git.getRepositoryById(repoId);
-		let repoPath;
-		if (repo === undefined) {
-			const mappedRepoPath = await repositoryMappings.getByRepoId(repoId);
-			if (!mappedRepoPath) return undefined;
-
-			repoPath = mappedRepoPath;
-		} else {
-			repoPath = repo.path;
-		}
+		const repoPath = repo?.path;
+		if (!repoPath) return undefined;
 
 		const filePath = path.join(repoPath, file);
 		const documentUri = URI.file(filePath).toString();

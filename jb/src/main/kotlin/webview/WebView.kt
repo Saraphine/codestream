@@ -10,4 +10,7 @@ interface WebView {
     fun postMessage(message: JsonElement)
     fun focus()
     fun openDevTools()
+    fun zoomIn()
+    fun zoomOut()
+    fun resetZoom()
 }

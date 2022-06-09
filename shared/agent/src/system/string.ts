@@ -28,7 +28,7 @@ SOFTWARE.
 /**
  * Modifications Copyright CodeStream Inc. under the Apache 2.0 License (Apache-2.0)
  */
-import { createHash, HexBase64Latin1Encoding } from "crypto";
+import { BinaryToTextEncoding, createHash } from "crypto";
 import { applyPatch, ParsedDiff } from "diff";
 import * as eol from "eol";
 import * as path from "path";
@@ -139,7 +139,7 @@ export namespace Strings {
 		}
 	}
 
-	export function md5(s: string, encoding: HexBase64Latin1Encoding = "base64"): string {
+	export function md5(s: string, encoding: BinaryToTextEncoding = "base64"): string {
 		return createHash("md5")
 			.update(s)
 			.digest(encoding);
@@ -263,7 +263,7 @@ export namespace Strings {
 		return s.replace(illegalCharsForFSRegEx, replacement);
 	}
 
-	export function sha1(s: string, encoding: HexBase64Latin1Encoding = "base64"): string {
+	export function sha1(s: string, encoding: BinaryToTextEncoding = "base64"): string {
 		return createHash("sha1")
 			.update(s)
 			.digest(encoding);
@@ -460,5 +460,107 @@ export namespace Strings {
 
 	export function pathToFileURL(str: string) {
 		return encodeURI(new URL(`file:///${path.resolve(str)}`).href);
+	}
+
+	const clean = (piece: string) =>
+		piece
+			.replace(/((^|\n)(?:[^\/\\]|\/[^*\/]|\\.)*?)\s*\/\*(?:[^*]|\*[^\/])*(\*\/|)/g, "$1")
+			.replace(/((^|\n)(?:[^\/\\]|\/[^\/]|\\.)*?)\s*\/\/[^\n]*/g, "$1")
+			.replace(/\n\s*/g, "");
+
+	/**
+	 * Creates a raw RegExp object from a well-commented multiline regex string
+	 * NOTE: this uses some RegExp default flags (gmi)
+	 *
+	 * @export
+	 * @param {*} { raw }
+	 * @param {...string[]} interpolations
+	 * @return {*}
+	 */
+	export function regexBuilder({ raw }: any, ...interpolations: string[]) {
+		return new RegExp(
+			interpolations.reduce(
+				(regex, insert, index) => regex + insert + clean(raw[index + 1]),
+				clean(raw[0])
+			),
+			"gmi"
+		);
+	}
+
+	export function sanitizeGraphqlValue(value: string) {
+		return value?.replace(/'/g, "").replace(/"/g, "");
+	}
+
+	export function trimEnd(str: string, c: string) {
+		if (str == null) return str;
+
+		if (str[str.length - 1] === c) {
+			str = str.slice(0, str.length - 1);
+		}
+
+		return str;
+	}
+
+	export function trimStart(str: string, c: string) {
+		if (str == null) return str;
+
+		if (str[0] === c) {
+			str = str.slice(1);
+		}
+
+		return str;
+	}
+	/**
+	 * Returns an array of partial paths from a file system path
+	 *
+	 * @export
+	 * @param {string} path (/users/foo/bar/foo.js)
+	 * @param {string} [separator="/"]
+	 * @return {*} [users/foo/bar/foo.js, foo/bar/foo.js, bar/foo.js, foo.js]
+	 */
+	export function asPartialPaths(path: string, separator: string = "/"): string[] {
+		if (!path) return [];
+
+		if (path.indexOf(separator) === -1) return [path];
+		if (path[0] === separator) path = path.substr(1);
+
+		const split = path.split(separator);
+		const results = [];
+		let targetArray = split;
+		while (targetArray.length) {
+			results.push(targetArray.join(separator));
+			targetArray = targetArray.slice(1);
+		}
+
+		return results;
+	}
+
+	/** Returns a readable phrase of items. examples:
+	 *
+	 * 		['foo'] = "foo"
+	 * 		['foo','bar'] = "foo and bar"
+	 * 		['foo','bar','baz'] = "foo, bar, and baz"
+	 *
+	 * @param  {string[]} items
+	 * @returns string
+	 */
+	export function phraseList(items: string[]): string {
+		if (!items) return "";
+		const length = items.length;
+		if (!length) return "";
+		if (length === 1) return items[0];
+		if (length === 2) return `${items[0]} and ${items[1]}`;
+
+		let results = "";
+		for (let i = 0; i < length; i++) {
+			results += `${items[i]}`;
+			if (i < length - 1) {
+				results += ", ";
+			}
+			if (i === length - 2) {
+				results += "and ";
+			}
+		}
+		return results;
 	}
 }

@@ -17,7 +17,7 @@ import { Dialog } from "@codestream/webview/src/components/Dialog";
 import { PullRequestRoot } from "./PullRequest";
 import { confirmPopup } from "../../Confirm";
 import { closeAllModals } from "@codestream/webview/store/context/actions";
-import { DropdownButton } from "../../Review/DropdownButton";
+import { DropdownButton } from "../../DropdownButton";
 import { Checkbox } from "@codestream/webview/src/components/Checkbox";
 import { SmartFormattedList } from "../../SmartFormattedList";
 import { LoadingMessage } from "@codestream/webview/src/components/LoadingMessage";

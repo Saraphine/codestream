@@ -1,3 +1,4 @@
+import { MetricTimesliceNameMapping } from "@codestream/protocols/agent";
 import {
 	WebviewContext,
 	WebviewPanels,
@@ -16,6 +17,7 @@ export enum ContextActionsType {
 	SetCodemarkAuthorFilter = "@context/SetCodemarkAuthorFilter",
 	SetChannelFilter = "@context/SetChannelFilter",
 	SetContext = "@context/Set",
+	SetTeamlessContext = "@context/Teamless/Set",
 	OpenPanel = "@context/OpenPanel",
 	ClosePanel = "@context/ClosePanel",
 	OpenModal = "@context/OpenModal",
@@ -37,14 +39,22 @@ export enum ContextActionsType {
 	RepositionCodemark = "@context/RepositionCodemark",
 	SetCurrentReview = "@context/SetCurrentReview",
 	SetCurrentReviewOptions = "@context/SetCurrentReviewOptions",
+	SetCurrentCodeError = "@context/SetCurrentCodeError",
 	SetCurrentRepo = "@context/SetCurrentRepo",
 	SetCreatePullRequest = "@context/SetCreatePullRequest",
 	SetCurrentPullRequest = "@context/SetCurrentPullRequest",
+	SetCurrentPullRequestNeedsRefresh = "@context/SetCurrentPullRequestNeedsRefresh",
+	SetCurrentErrorsInboxOptions = "@context/SetCurrentErrorsInboxOptions",
+	SetCurrentInstrumentationOptions = "@context/SetCurrentInstrumentationOptions",
+	SetCurrentPixieDynamicLoggingOptions = "@context/SetCurrentPixieDynamicLoggingOptions",
 	SetCurrentPullRequestAndBranch = "@context/SetCurrentPullRequestAndBranch",
 	SetNewPullRequestOptions = "@context/SetNewPullRequestOptions",
 	SetStartWorkCard = "@context/SetStartWorkCard",
 	SetOnboardStep = "@context/SetOnboardStep",
-	SetIsFirstPageview = "@context/SetIsFirstPageview"
+	SetIsFirstPageview = "@context/SetIsFirstPageview",
+	SetPendingProtocolHandlerUrl = "@context/SetPendingProtocolHandlerUrl",
+	SetWantNewRelicOptions = "@context/SetWantNewRelicOptions",
+	SetCurrentMethodLevelTelemetry = "@context/SetCurrentMethodLevelTelemetry"
 }
 
 /**
@@ -76,6 +86,12 @@ export interface ContextState extends WebviewContext {
 
 	spatialViewShowPRComments: boolean;
 
+	currentPullRequestNeedsRefresh: {
+		needsRefresh: boolean;
+		providerId: string;
+		pullRequestId: string;
+	};
+
 	issueProvider?: string;
 	shareTargetTeamId?: string;
 	panelStack: (WebviewPanels | string)[];
@@ -92,6 +108,19 @@ export interface ContextState extends WebviewContext {
 
 	pullRequestCheckoutBranch: boolean;
 	newPullRequestOptions?: { branch: NewPullRequestBranch };
+	currentInstrumentation?: any;
+	currentPixieDynamicLoggingOptions?: {
+		functionName: string;
+		functionParameters: { name: string }[];
+		functionReceiver?: string;
+		packageName: string;
+	};
+	errorsInboxOptions?: { stack?: string; customAttributes?: string; url?: string };
+
+	wantNewRelicOptions?: { repoId?: string; path?: string; projectType?: any };
+	currentMethodLevelTelemetry?: CurrentMethodLevelTelemetry;
+
+	selectedRegion?: string;
 }
 
 export type ChatProviderAccess = "strict" | "permissive";
@@ -101,9 +130,12 @@ export enum Route {
 	Signup = "signup",
 	Login = "login",
 	ProviderAuth = "providerAuth",
+	NewRelicSignup = "newRelicSignup",
 	JoinTeam = "joinTeam",
 	EmailConfirmation = "emailConfirmation",
+	LoginCodeConfirmation = "loginCodeConfirmation",
 	TeamCreation = "teamCreation",
+	CompanyCreation = "companyCreation",
 	ForgotPassword = "forgotPassword",
 	MustSetPassword = "MustSetPassword",
 	OktaConfig = "oktaConfig"
@@ -112,4 +144,24 @@ export enum Route {
 export interface RouteState {
 	name: Route;
 	params: AnyObject;
+}
+
+export interface CurrentMethodLevelTelemetry {
+	newRelicEntityGuid?: string;
+	newRelicAccountId?: string;
+	languageId: string;
+	codeNamespace?: string;
+	functionName?: string;
+	filePath?: string;
+	relativeFilePath?: string;
+	metricTimesliceNameMapping?: MetricTimesliceNameMapping;
+	error?: {
+		message?: string;
+		type?: string;
+	};
+	repo?: {
+		id: string;
+		name: string;
+		remote: string;
+	};
 }

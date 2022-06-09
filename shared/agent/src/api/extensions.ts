@@ -2,6 +2,7 @@
 import { Range } from "vscode-languageserver";
 import { Logger } from "../logger";
 import {
+	CSCodeError,
 	CSCodemark,
 	CSLocationArray,
 	CSMarker,
@@ -340,12 +341,31 @@ export interface ReviewActionId {
 	parentPostId?: string;
 }
 
+export interface CodeErrorActionId {
+	id: number;
+	linkType: "web" | "ide" | "code-error-reply";
+	externalProvider?: string;
+	codeErrorId: string;
+	streamId?: string;
+	creatorId?: string;
+	parentPostId?: string;
+}
+
 export interface ReplyActionId {
 	id: number;
 	linkType: "web" | "ide" | "external" | "reply" | "reply-disabled";
 	externalType?: "issue" | "code";
 	// codemarkId
 	cId: string;
+	// provider creator user id, a slack userId, for example
+	pcuId?: string;
+}
+
+export interface CodeErrorReplyActionId {
+	id: number;
+	linkType: "web" | "ide" | "review-reply" | "review-reply-disabled" | "code-error-reply";
+	// codeErrorId
+	ceId: string;
 	// provider creator user id, a slack userId, for example
 	pcuId?: string;
 }
@@ -391,6 +411,20 @@ export function toActionId(
 	return JSON.stringify(actionId);
 }
 
+export function toCodeErrorActionId(
+	id: number,
+	linkType: "web" | "ide" | "code-error-reply",
+	codeError: CSCodeError
+): string {
+	const actionId: CodeErrorActionId = {
+		id: id,
+		codeErrorId: codeError.id,
+		linkType: linkType
+	};
+
+	return JSON.stringify(actionId);
+}
+
 export function toExternalActionId(
 	id: number,
 	providerType: "issue" | "code",
@@ -406,6 +440,21 @@ export function toExternalActionId(
 		teamId: codemark.teamId,
 		codemarkId: codemark.id,
 		markerId: marker && marker.id
+	};
+
+	return JSON.stringify(actionId);
+}
+
+export function toCodeErrorReplyActionId(
+	id: number,
+	codeError: CSCodeError,
+	providerCreatorUserId?: string
+): string {
+	const actionId: CodeErrorReplyActionId = {
+		id: id,
+		linkType: "code-error-reply",
+		ceId: codeError.id,
+		pcuId: providerCreatorUserId
 	};
 
 	return JSON.stringify(actionId);

@@ -1,6 +1,6 @@
+import { getUserProviderInfo } from "@codestream/webview/store/providers/utils";
 import { ActionType } from "../common";
 import * as actions from "./actions";
-import { getUserProviderInfo } from "./actions";
 import { ProvidersState, ProvidersActionsType } from "./types";
 import { CodeStreamState } from "..";
 import {
@@ -13,7 +13,6 @@ import { mapFilter, safe } from "@codestream/webview/utils";
 import { ThirdPartyProviderConfig } from "@codestream/protocols/agent";
 import { createSelector } from "reselect";
 import { PROVIDER_MAPPINGS } from "@codestream/webview/Stream/CrossPostIssueControls/types";
-import { ContextState } from "../context/types";
 import { UsersState } from "../users/types";
 import { SessionState } from "../session/types";
 
@@ -49,13 +48,19 @@ export interface LabelHash {
 	PullRequests: string;
 	Pullrequest: string;
 	pullrequest: string;
+	pullrequests: string;
 	PR: string;
 	PRs: string;
 	pr: string;
 	AddSingleComment: string;
+	repoBaseLabel: string;
+	repoBranchBaseLabel;
+	repoHeadLabel: string;
+	repoBranchHeadLabel: string;
+	icon?: string;
 }
 
-const MRLabel = {
+const MRLabel: LabelHash = {
 	PullRequest: "Merge Request",
 	PullRequests: "Merge Requests",
 	Pullrequest: "Merge request",
@@ -64,10 +69,14 @@ const MRLabel = {
 	PR: "MR",
 	PRs: "MRs",
 	pr: "mr",
-	AddSingleComment: "Add comment now"
+	AddSingleComment: "Add comment now",
+	repoBaseLabel: "target",
+	repoBranchBaseLabel: "target",
+	repoHeadLabel: "source",
+	repoBranchHeadLabel: "source"
 };
 
-const PRLabel = {
+const PRLabel: LabelHash = {
 	PullRequest: "Pull Request",
 	PullRequests: "Pull Requests",
 	Pullrequest: "Pull request",
@@ -76,7 +85,27 @@ const PRLabel = {
 	PR: "PR",
 	PRs: "PRs",
 	pr: "pr",
-	AddSingleComment: "Add single comment"
+	AddSingleComment: "Add single comment",
+	repoBaseLabel: "base",
+	repoBranchBaseLabel: "base",
+	repoHeadLabel: "head",
+	repoBranchHeadLabel: "compare"
+};
+
+const BBPRLabel: LabelHash = {
+	PullRequest: "Pull Request",
+	PullRequests: "Pull Requests",
+	Pullrequest: "Pull request",
+	pullrequest: "pull request",
+	pullrequests: "pull requests",
+	PR: "PR",
+	PRs: "PRs",
+	pr: "pr",
+	AddSingleComment: "Add single comment",
+	repoBaseLabel: "base",
+	repoBranchBaseLabel: "destination",
+	repoHeadLabel: "head",
+	repoBranchHeadLabel: "source"
 };
 
 export const getPRLabel = createSelector(
@@ -85,12 +114,20 @@ export const getPRLabel = createSelector(
 		return isConnected(state, { id: "gitlab*com" }) ||
 			isConnected(state, { id: "gitlab/enterprise" })
 			? MRLabel
+			: isConnected(state, { id: "bitbucket*org" }) ||
+			  isConnected(state, { id: "bitbucket/server" })
+			? BBPRLabel
 			: PRLabel;
 	}
 );
 
-export const getPRLabelForProvider = (provider: string): LabelHash => {
-	return provider.toLocaleLowerCase().startsWith("gitlab") ? MRLabel : PRLabel;
+export const getPRLabelForProvider = (providerId: string): LabelHash => {
+	const providerIdNormalized = providerId.toLocaleLowerCase();
+	return providerIdNormalized.startsWith("gitlab")
+		? { ...MRLabel, icon: "" }
+		: providerIdNormalized.startsWith("bitbucket*org")
+		? BBPRLabel
+		: { ...PRLabel, icon: "" };
 };
 
 export const isConnected = (
@@ -132,18 +169,18 @@ export const isConnectedSelectorFriendly = (
 
 	// ensure there's provider info for the user
 	if (currentUser.providerInfo == undefined) return false;
-
 	if (isNameOption(option)) {
 		const providerName = option.name;
 		const info = getUserProviderInfo(currentUser, providerName, currentTeamId);
 		switch (providerName) {
 			case "github_enterprise":
 			case "gitlab_enterprise":
-			case "bitbucket_server": {
+			case "bitbucket_server":
+			case "jiraserver": {
 				// these providers now only depend on having a personal access token
 				if (info != undefined) {
 					const isConnected = info.accessToken != undefined;
-					if (isConnected && accessTokenError) {
+					if (accessTokenError) {
 						// see comment on accessTokenError in the method parameters, above
 						accessTokenError.accessTokenError = info.tokenError;
 					}
@@ -151,28 +188,12 @@ export const isConnectedSelectorFriendly = (
 				}
 				return false;
 			}
-			case "jiraserver": {
-				// jiraserver is now the only enterprise/on-prem provider that actually uses hosts
-				return (
-					info != undefined &&
-					info.hosts != undefined &&
-					Object.keys(info.hosts).some(host => {
-						const isConnected =
-							providers[host] != undefined && info.hosts![host].accessToken != undefined;
-						if (isConnected && accessTokenError) {
-							// see comment on accessTokenError in the method parameters, above
-							accessTokenError.accessTokenError = info.hosts![host].tokenError;
-						}
-						return isConnected;
-					})
-				);
-			}
 			default: {
 				// is there an accessToken for the provider?
 				if (info == undefined) return false;
+				if (accessTokenError) accessTokenError.accessTokenError = info.tokenError;
 				if (info.accessToken != undefined) {
 					// see comment on accessTokenError in the method parameters, above
-					if (accessTokenError) accessTokenError.accessTokenError = info.tokenError;
 					return true;
 				}
 				if (["slack", "msteams"].includes(providerName)) {
@@ -189,7 +210,7 @@ export const isConnectedSelectorFriendly = (
 						infoPerTeam &&
 						Object.values(infoPerTeam).some(i => {
 							const isConnected = i.accessToken != undefined;
-							if (isConnected && accessTokenError) {
+							if (accessTokenError) {
 								// see comment on accessTokenError in the method parameters, above
 								accessTokenError.accessTokenError = i.tokenError;
 							}
@@ -209,11 +230,11 @@ export const isConnectedSelectorFriendly = (
 		if (infoForProvider == undefined) return false;
 
 		if (!providerConfig.isEnterprise) {
+			if (accessTokenError) {
+				// see comment on accessTokenError in the method parameters, above
+				accessTokenError.accessTokenError = infoForProvider.tokenError;
+			}
 			if (infoForProvider.accessToken) {
-				if (accessTokenError) {
-					// see comment on accessTokenError in the method parameters, above
-					accessTokenError.accessTokenError = infoForProvider.tokenError;
-				}
 				return true;
 			}
 			const infoPerTeam = (infoForProvider as any).multiple as { [key: string]: CSProviderInfos };
@@ -221,7 +242,7 @@ export const isConnectedSelectorFriendly = (
 				infoPerTeam &&
 				Object.values(infoPerTeam).some(i => {
 					const isConnected = i.accessToken != undefined;
-					if (isConnected && accessTokenError) {
+					if (accessTokenError) {
 						// see comment on accessTokenError in the method parameters, above
 						accessTokenError.accessTokenError = i.tokenError;
 					}
@@ -238,7 +259,7 @@ export const isConnectedSelectorFriendly = (
 			infoForProvider.hosts[providerConfig.id] &&
 			infoForProvider.hosts[providerConfig.id].accessToken
 		);
-		if (isConnected && accessTokenError) {
+		if (accessTokenError) {
 			// see comment on accessTokenError in the method parameters, above
 			accessTokenError.accessTokenError = infoForProvider.hosts![providerConfig.id].tokenError;
 		}

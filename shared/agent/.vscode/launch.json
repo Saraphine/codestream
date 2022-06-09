@@ -15,7 +15,7 @@
 		{
 			"type": "node",
 			"request": "attach",
-			"name": "Attach to Agent (VS)",
+			"name": "Attach to Agent (VS/JB)",
 			"port": 6010,
 			"cwd": "${workspaceFolder}",
 			"outFiles": ["${workspaceFolder}/dist/agent-pkg.js"],
@@ -53,6 +53,20 @@
 			"outFiles": ["${workspaceFolder}/dist/agent.js"],
 			"smartStep": true,
 			"sourceMaps": true
+		},
+		{
+			"type": "node",
+			"request": "launch",
+			"runtimeExecutable": "node",
+			"name": "Run UnitTests for File",
+			"program": "${workspaceFolder}/node_modules/.bin/mochapack",
+			"args": ["${file}"],
+			"cwd": "${workspaceFolder}/",
+			"console": "integratedTerminal",
+			"internalConsoleOptions": "neverOpen",
+			"env": {
+				"TS_NODE_COMPILER_OPTIONS": "{ \"module\": \"commonjs\", \"types\": [\"node\"] }"
+			}
 		},
 		{
 			"type": "node",

@@ -1,5 +1,12 @@
 "use strict";
+import { Agent as HttpsAgent } from "https";
+import * as url from "url";
+import HttpsProxyAgent from "https-proxy-agent";
+// import * as vscode from "vscode";
+import fetch, { RequestInit } from "node-fetch";
 import { ProtocolHandler } from "protocolHandler";
+import { ScmTreeDataProvider } from "views/scmTreeDataProvider";
+import { AbortController } from "node-abort-controller";
 import {
 	Disposable,
 	env,
@@ -11,23 +18,23 @@ import {
 	window,
 	workspace
 } from "vscode";
-import { ScmTreeDataProvider } from "views/scmTreeDataProvider";
-import { CodeStreamWebviewSidebar } from "webviews/webviewSidebar";
 import { WebviewLike } from "webviews/webviewLike";
+import { CodeStreamWebviewSidebar } from "webviews/webviewSidebar";
 
 import { CodemarkType } from "@codestream/protocols/api";
+
+import { GitExtension } from "./@types/git";
 import {
 	CreatePullRequestActionContext,
 	GitLensApi,
 	HoverCommandsActionContext,
 	OpenPullRequestActionContext
 } from "./@types/gitlens";
-import { GitExtension } from "./@types/git";
 import { SessionStatus, SessionStatusChangedEvent } from "./api/session";
 import { ContextKeys, GlobalState, setContext } from "./common";
 import { Config, configuration, Configuration } from "./configuration";
 import { extensionQualifiedId } from "./constants";
-import { Container } from "./container";
+import { Container, TelemetryOptions } from "./container";
 import { Logger, TraceLevel } from "./logger";
 import { FileSystem, Strings, Versions } from "./system";
 
@@ -42,6 +49,8 @@ interface BuildInfoMetadata {
 	buildNumber: string;
 	assetEnvironment: string;
 }
+
+export const IDE_NAME = "VS Code";
 
 export async function activate(context: ExtensionContext) {
 	const start = process.hrtime();
@@ -78,6 +87,31 @@ export async function activate(context: ExtensionContext) {
 
 		cfg = configuration.get<Config>();
 	}
+	let telemetryOptions: TelemetryOptions | undefined = undefined;
+	try {
+		const proxyAgent = getHttpsProxyAgent(getInitializationOptions());
+		const requestInit: RequestInit | undefined = {
+			agent: proxyAgent,
+			headers: {
+				"X-CS-Plugin-IDE": IDE_NAME
+			}
+		};
+
+		// 5s failsafe
+		const controller = new AbortController();
+		const timeout = setTimeout(() => {
+			controller.abort();
+		}, 5000);
+		requestInit.signal = controller.signal;
+
+		const response = await fetch(`${cfg.serverUrl.trim()}/no-auth/nr-ingest-key`, requestInit);
+
+		clearTimeout(timeout);
+
+		telemetryOptions = await response.json();
+	} catch (ex) {
+		Logger.warn(`no NewRelic telemetry - ${ex.message}`);
+	}
 
 	let webviewLikeSidebar: (WebviewLike & CodeStreamWebviewSidebar) | undefined = undefined;
 	// this plumping lives here rather than the WebviewController as it needs to get activated here
@@ -89,6 +123,9 @@ export async function activate(context: ExtensionContext) {
 			}
 		})
 	);
+	// const codelensProvider = new CodelensProvider();
+
+	// languages.registerCodeLensProvider("*", codelensProvider);
 
 	await Container.initialize(
 		context,
@@ -102,7 +139,7 @@ export async function activate(context: ExtensionContext) {
 			},
 			gitPath: git,
 			ide: {
-				name: "VS Code",
+				name: IDE_NAME,
 				version: vscodeVersion,
 				// Visual Studio Code or Visual Studio Code - Insiders
 				detail: edition
@@ -110,10 +147,12 @@ export async function activate(context: ExtensionContext) {
 			isDebugging: Logger.isDebugging,
 			serverUrl: cfg.serverUrl,
 			disableStrictSSL: cfg.disableStrictSSL,
+			extraCerts: cfg.extraCerts,
 			traceLevel: Logger.level,
 			machineId: env.machineId
 		},
-		webviewLikeSidebar
+		webviewLikeSidebar,
+		telemetryOptions
 	);
 
 	const scmTreeDataProvider = new ScmTreeDataProvider();
@@ -407,40 +446,114 @@ async function showStartupUpgradeMessage(version: string, previousVersion: strin
 
 	const [major, minor] = version.split(".");
 
-	if (previousVersion !== undefined) {
-		const [prevMajor, prevMinor] = previousVersion.split(".");
-		if (
-			(major === prevMajor && minor === prevMinor) ||
-			// Don't notify on downgrades
-			major < prevMajor ||
-			(major === prevMajor && minor < prevMinor)
-		) {
-			return;
-		}
+	const [prevMajor, prevMinor] = previousVersion.split(".");
+	if (
+		(major === prevMajor && minor === prevMinor) ||
+		// Don't notify on downgrades
+		major < prevMajor ||
+		(major === prevMajor && minor < prevMinor)
+	) {
+		return;
 	}
 
 	const compareTo = Versions.from(major, minor);
 	if (skipVersions.some(v => Versions.compare(compareTo, v) === 0)) return;
 
-	const actions: MessageItem[] = [{ title: "What's New" } /* , { title: "Release Notes" } */];
+	if (major > prevMajor) {
+		const actions: MessageItem[] = [{ title: "What's New" } /* , { title: "Release Notes" } */];
 
-	const result = await window.showInformationMessage(
-		`CodeStream has been updated to v${version} — check out what's new!`,
-		...actions
-	);
+		const result = await window.showInformationMessage(
+			`CodeStream has been updated to v${version} — check out what's new!`,
+			...actions
+		);
 
-	if (result != null) {
-		if (result === actions[0]) {
-			await env.openExternal(
-				Uri.parse(
-					`https://www.codestream.com/blog/codestream-v${major}-${minor}?utm_source=ext_vsc&utm_medium=popup&utm_campaign=v${major}-${minor}`
-				)
-			);
+		if (result != null) {
+			if (result === actions[0]) {
+				await env.openExternal(
+					Uri.parse(
+						`https://www.codestream.com/blog/codestream-v${major}-${minor}?utm_source=ext_vsc&utm_medium=popup&utm_campaign=v${major}-${minor}`
+					)
+				);
+			}
+			// else if (result === actions[1]) {
+			// 	await env.openExternal(
+			// 		Uri.parse("https://marketplace.visualstudio.com/items/CodeStream.codestream/changelog")
+			// 	);
+			// }
 		}
-		// else if (result === actions[1]) {
-		// 	await env.openExternal(
-		// 		Uri.parse("https://marketplace.visualstudio.com/items/CodeStream.codestream/changelog")
-		// 	);
-		// }
 	}
+}
+
+export function getHttpsProxyAgent(options: {
+	proxySupport?: string;
+	proxy?: {
+		url: string;
+		strictSSL?: boolean;
+	};
+}) {
+	let _httpsAgent: HttpsAgent | HttpsProxyAgent | undefined = undefined;
+	const redactProxyPasswdRegex = /(http:\/\/.*:)(.*)(@.*)/gi;
+	if (
+		options.proxySupport === "override" ||
+		(options.proxySupport == null && options.proxy != null)
+	) {
+		if (options.proxy != null) {
+			const redactedUrl = options.proxy.url.replace(redactProxyPasswdRegex, "$1*****$3");
+			Logger.log(
+				`Proxy support is in override with url=${redactedUrl}, strictSSL=${options.proxy.strictSSL}`
+			);
+			_httpsAgent = new HttpsProxyAgent({
+				...url.parse(options.proxy.url),
+				rejectUnauthorized: options.proxy.strictSSL
+			} as any);
+		} else {
+			Logger.log("Proxy support is in override, but no proxy settings were provided");
+		}
+	} else if (options.proxySupport === "on") {
+		const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+		if (proxyUrl) {
+			const strictSSL = options.proxy ? options.proxy.strictSSL : true;
+			const redactedUrl = proxyUrl.replace(redactProxyPasswdRegex, "$1*****$3");
+			Logger.log(`Proxy support is on with url=${redactedUrl}, strictSSL=${strictSSL}`);
+
+			let proxyUri;
+			try {
+				proxyUri = url.parse(proxyUrl);
+			} catch {}
+
+			if (proxyUri) {
+				_httpsAgent = new HttpsProxyAgent({
+					...proxyUri,
+					rejectUnauthorized: options.proxy ? options.proxy.strictSSL : true
+				} as any);
+			}
+		} else {
+			Logger.log("Proxy support is on, but no proxy url was found");
+		}
+	} else {
+		Logger.log("Proxy support is off");
+	}
+	return _httpsAgent;
+}
+
+export function getInitializationOptions(
+	options: { proxy?: any; proxySupport?: string; newRelicTelemetryEnabled?: boolean } = {}
+) {
+	if (Container.config.proxySupport !== "off") {
+		const httpSettings = workspace.getConfiguration("http");
+		const proxy = httpSettings.get<string | undefined>("proxy", "");
+		if (proxy) {
+			options.proxy = {
+				url: proxy,
+				strictSSL: httpSettings.get<boolean>("proxyStrictSSL", true)
+			};
+			options.proxySupport = "override";
+		} else {
+			options.proxySupport = "on";
+		}
+	} else {
+		options.proxySupport = "off";
+	}
+
+	return options;
 }

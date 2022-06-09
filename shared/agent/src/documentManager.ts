@@ -1,5 +1,6 @@
 "use strict";
 import { isEqual as _isEqual } from "lodash-es";
+import path from "path";
 import {
 	Connection,
 	Disposable,
@@ -10,7 +11,6 @@ import {
 	TextDocuments
 } from "vscode-languageserver";
 import { URI } from "vscode-uri";
-import path from "path";
 import { Logger } from "./logger";
 import { Disposables } from "./system";
 const escapedRegex = /(^.*?:\/\/\/)([a-z])%3A(\/.*$)/;

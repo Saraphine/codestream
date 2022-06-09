@@ -27,7 +27,7 @@ import { DelayedRender } from "../Container/DelayedRender";
 import { localStore } from "../utilities/storage";
 import { CodeStreamState } from "../store";
 import { HostApi } from "../webview-api";
-import { DropdownButton } from "./Review/DropdownButton";
+import { DropdownButton } from "./DropdownButton";
 import { Button } from "../src/components/Button";
 import { ButtonRow } from "../src/components/Dialog";
 import { setCurrentCodemark } from "../store/context/actions";

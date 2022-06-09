@@ -2,6 +2,7 @@ package com.codestream.editor
 
 import com.codestream.extensions.editorSelections
 import com.codestream.extensions.file
+import com.codestream.extensions.gitSha
 import com.codestream.extensions.uri
 import com.codestream.extensions.visibleRanges
 import com.codestream.protocols.webview.EditorNotifications
@@ -24,6 +25,7 @@ class SelectionListenerImpl(val project: Project) : SelectionListener {
             project.webViewService?.postNotification(
                 EditorNotifications.DidChangeSelection(
                     e.editor.document.uri,
+                    e.editor.document.gitSha,
                     e.editorSelections,
                     e.editor.visibleRanges,
                     e.editor.document.lineCount

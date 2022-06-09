@@ -1,5 +1,6 @@
 import { RequestType } from "vscode-languageserver-protocol";
-import { CSCompany } from "./api.protocol";
+import { CSCompany, CSTeam } from "./api.protocol";
+import { CSStream, CSUser } from "./api.protocol.models";
 
 export interface FetchCompaniesRequest {
 	mine?: boolean;
@@ -31,3 +32,75 @@ export const GetCompanyRequestType = new RequestType<
 	void,
 	void
 >("codestream/company");
+
+export interface CreateCompanyRequest {
+	name: string;
+	domainJoining?: string[];
+}
+
+export interface CreateCompanyResponse {
+	company: CSCompany;
+	team: CSTeam;
+	streams?: CSStream[];
+}
+
+export const CreateCompanyRequestType = new RequestType<
+	CreateCompanyRequest,
+	CreateCompanyResponse,
+	void,
+	void
+>("codestream/company/create");
+
+export interface JoinCompanyRequest {
+	companyId: string;
+	fromEnvironment?: {
+		serverUrl: string;
+		userId: string;
+		toServerUrl: string;
+	};
+}
+
+export interface JoinCompanyResponse {
+	company: CSCompany;
+	team: CSTeam;
+	user: CSUser;
+}
+
+export const JoinCompanyRequestType = new RequestType<
+	JoinCompanyRequest,
+	JoinCompanyResponse,
+	void,
+	void
+>("codestream/companies/join");
+
+export interface UpdateCompanyRequest {
+	companyId: string;
+	name?: string;
+	domainJoining?: string[];
+}
+
+export interface UpdateCompanyResponse {
+	company: CSCompany;
+}
+
+export const UpdateCompanyRequestType = new RequestType<
+	UpdateCompanyRequest,
+	UpdateCompanyResponse,
+	void,
+	void
+>("codestream/company/update");
+
+export interface DeleteCompanyRequest {
+	companyId: string;
+}
+
+export interface DeleteCompanyResponse {
+	company: CSCompany;
+}
+
+export const DeleteCompanyRequestType = new RequestType<
+	DeleteCompanyRequest,
+	DeleteCompanyResponse,
+	void,
+	void
+>("codestream/company/delete");

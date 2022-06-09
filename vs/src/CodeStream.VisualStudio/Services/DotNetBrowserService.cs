@@ -1,12 +1,10 @@
-﻿using CodeStream.VisualStudio.Commands;
-using CodeStream.VisualStudio.Core;
+﻿using CodeStream.VisualStudio.Core;
 using CodeStream.VisualStudio.Core.Events;
 using CodeStream.VisualStudio.Core.Extensions;
 using CodeStream.VisualStudio.Core.Logging;
 using CodeStream.VisualStudio.Core.Managers;
 using CodeStream.VisualStudio.Core.Models;
 using CodeStream.VisualStudio.Core.Services;
-using CodeStream.VisualStudio.UI.Wpf;
 using DotNetBrowser;
 using DotNetBrowser.Events;
 using DotNetBrowser.WPF;
@@ -24,7 +22,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using Microsoft;
 using Microsoft.VisualStudio.ComponentModelHost;
 using static CodeStream.VisualStudio.Core.Extensions.FileSystemExtensions;
@@ -94,15 +91,19 @@ namespace CodeStream.VisualStudio.Services {
 
 		private readonly IServiceProvider _serviceProvider;
 		private readonly IEventAggregator _eventAggregator;
+		private readonly IHttpClientService _httpClientService;
+
 		private readonly List<IDisposable> _disposables;
 		private IDisposable _disposable;
 
 		[ImportingConstructor]
 		public DotNetBrowserService(
 			[Import(typeof(SVsServiceProvider))] IServiceProvider serviceProvider,
-				IEventAggregator eventAggregator) {
+				IEventAggregator eventAggregator,
+				IHttpClientService httpClientService) {
 			_serviceProvider = serviceProvider;
 			_eventAggregator = eventAggregator;
+			_httpClientService = httpClientService;
 
 			try {
 				_messageQueue = new BlockingCollection<string>(new ConcurrentQueue<string>());
@@ -616,6 +617,7 @@ namespace CodeStream.VisualStudio.Services {
 				// ReSharper disable once ResourceItemNotResolved
 				var styleSheet = resourceManager.GetString("theme");
 
+
 				var theme = ThemeManager.Generate();
 				var isDebuggingEnabled = Log.IsDebugEnabled();
 
@@ -643,8 +645,24 @@ namespace CodeStream.VisualStudio.Services {
 						}
 					}
 				}
-
+				
 				harness = harness.Replace(@"<style id=""theme""></style>", $@"<style id=""theme"">{styleSheet}</style>");
+
+				//NR telemetry injection
+				var nrSettings = _httpClientService.GetNREnvironmentSettings();
+				if (nrSettings.HasValidSettings) {
+					var newRelicTelemetryJs = System.IO.File.ReadAllText("./dist/webview/newrelic-browser.js");
+					newRelicTelemetryJs = newRelicTelemetryJs
+						.Replace("{{accountID}}", nrSettings.AccountId)
+						.Replace("{{agentID}}", nrSettings.AgentId)
+						.Replace("{{licenseKey}}", nrSettings.BrowserLicenseKey)
+						.Replace("{{applicationID}}", nrSettings.ApplicationId);
+
+					harness = harness.Replace(@"<script id=""newrelic-browser""></script>", $@"<script id=""newrelic-browser"">{newRelicTelemetryJs}</script>");
+				}
+				else {
+					harness = harness.Replace(@"<script id=""newrelic-browser""></script>", "<!-- No Telemetry -->");
+				}
 
 #if !DEBUG
 			if (isDebuggingEnabled)
@@ -752,7 +770,7 @@ namespace CodeStream.VisualStudio.Services {
 			private static readonly List<string> DefaultSwitches = new List<string>
 			{
 #if DEBUG
-				"--remote-debugging-port=9224",
+				"--remote-debugging-port=9222",
 #else
 				"--remote-debugging-port=9223",
 #endif

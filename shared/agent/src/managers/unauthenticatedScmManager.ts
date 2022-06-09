@@ -1,6 +1,6 @@
-import { Logger } from "../logger";
 import { Container } from "../container";
 import { git } from "../git/git";
+import { Logger } from "../logger";
 import {
 	GetUserInfoRequestType,
 	GetUserInfoResponse,
@@ -10,6 +10,7 @@ import {
 	GetWorkspaceRepoInfoResponse
 } from "../protocol/agent.protocol";
 import { lsp, lspHandler } from "../system";
+
 const os = require("os");
 
 @lsp

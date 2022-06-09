@@ -1,4 +1,4 @@
-import React, { Component } from "react";
+import React, { Component, SyntheticEvent } from "react";
 import PropTypes from "prop-types";
 import { connect, batch } from "react-redux";
 import * as userSelectors from "../store/users/reducer";
@@ -7,6 +7,7 @@ import ScrollBox from "./ScrollBox";
 import { CreateCodemarkIcons } from "./CreateCodemarkIcons";
 import Tooltip from "./Tooltip"; // careful with tooltips on codemarks; they are not performant
 import { ReviewNav } from "./ReviewNav";
+import { CodeErrorNav } from "./CodeErrorNav";
 import Feedback from "./Feedback";
 import cx from "classnames";
 import {
@@ -55,7 +56,9 @@ import {
 	repositionCodemark,
 	setComposeCodemarkActive,
 	closePanel,
-	closeAllModals
+	closeAllModals,
+	closeAllPanels,
+	closePrDetailModal
 } from "../store/context/actions";
 import { sortBy as _sortBy } from "lodash-es";
 import { setEditorContext, changeSelection } from "../store/editorContext/actions";
@@ -64,7 +67,7 @@ import ContainerAtEditorLine from "./SpatialView/ContainerAtEditorLine";
 import { CodemarkForm } from "./CodemarkForm";
 import { middlewareInjector } from "../store/middleware-injector";
 import { DocumentMarkersActionsType } from "../store/documentMarkers/types";
-import { createPostAndCodemark } from "./actions";
+import { createPostAndCodemark, setUserPreference } from "./actions";
 import Codemark from "./Codemark";
 import { PostEntryPoint } from "../store/context/types";
 import { localStore } from "../utilities/storage";
@@ -81,7 +84,6 @@ import {
 import styled from "styled-components";
 import { PanelHeader } from "../src/components/PanelHeader";
 import * as fs from "../utilities/fs";
-import { FileInfo } from "./FileInfo";
 import { isFeatureEnabled } from "../store/apiVersioning/reducer";
 import { Keybindings } from "./Keybindings";
 import { setNewPostEntry } from "../store/context/actions";
@@ -102,7 +104,6 @@ import { Modal } from "./Modal";
 interface Props {
 	showFeedbackSmiley: boolean;
 	hasPRProvider: boolean;
-	showPRComments: boolean;
 	currentStreamId?: string;
 	team: CSTeam;
 	viewInline: boolean;
@@ -124,10 +125,13 @@ interface Props {
 	isInVscode: boolean;
 	webviewFocused: boolean;
 	currentReviewId?: string;
+	currentCodeErrorId?: string;
+	currentPullRequestCommentId?: string;
 	currentPullRequestId?: string;
 	currentPullRequestProviderId?: string;
 	lightningCodeReviewsEnabled: boolean;
-	activePanel: WebviewPanels;
+	activePanel: WebviewPanels | string;
+	expandedPullRequestGroupIndex?: string;
 
 	setEditorContext: (
 		...args: Parameters<typeof setEditorContext>
@@ -135,7 +139,7 @@ interface Props {
 	fetchDocumentMarkers: (
 		...args: Parameters<typeof fetchDocumentMarkers>
 	) => ReturnType<ReturnType<typeof fetchDocumentMarkers>>;
-	postAction(): void;
+	postAction(...args: any[]): any;
 	setCodemarksFileViewStyle: (
 		...args: Parameters<typeof setCodemarksFileViewStyle>
 	) => ReturnType<typeof setCodemarksFileViewStyle>;
@@ -151,7 +155,8 @@ interface Props {
 	) => ReturnType<typeof repositionCodemark>;
 	closePanel: Function;
 	closeAllModals: Function;
-
+	closeAllPanels: Function;
+	closePrDetailModal: Function;
 	createPostAndCodemark: (...args: Parameters<typeof createPostAndCodemark>) => any;
 	addDocumentMarker: Function;
 	changeSelection: Function;
@@ -174,7 +179,6 @@ interface State {
 	// newCodemarkAttributes: { type: CodemarkType; viewingInline: boolean } | undefined;
 	multiLocationCodemarkForm: boolean;
 	codemarkFormError?: string;
-	showPRCommentsField: boolean | undefined;
 }
 
 const NEW_CODEMARK_ATTRIBUTES_TO_RESTORE = "spatial-view:restore-codemark-form";
@@ -204,8 +208,7 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 			numBelow: 0,
 			numLinesVisible: props.numLinesVisible,
 			problem: props.scmInfo && getFileScmError(props.scmInfo),
-			multiLocationCodemarkForm: false,
-			showPRCommentsField: props.showPRComments
+			multiLocationCodemarkForm: false
 		};
 
 		this.docMarkersByStartLine = {};
@@ -224,7 +227,7 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 		this.disposables.push(
 			HostApi.instance.on(DidChangeDocumentMarkersNotificationType, ({ textDocument }) => {
 				if (this.props.textEditorUri === textDocument.uri) {
-					this.props.fetchDocumentMarkers(textDocument.uri, !this.props.showPRComments);
+					this.props.fetchDocumentMarkers(textDocument.uri);
 				}
 			}),
 			{
@@ -277,14 +280,6 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 		);
 		if (didStartLineChange) {
 			this.scrollTo(this.props.metrics.lineHeight!);
-		}
-
-		if (
-			this.props.hasPRProvider &&
-			!prevProps.hasPRProvider &&
-			this._waitingForPRProviderConnection
-		) {
-			this.props.setUserPreference(["codemarksShowPRComments"], true);
 		}
 
 		this.repositionCodemarks();
@@ -454,7 +449,7 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 		const scmError = getFileScmError(scmInfo);
 		this.setState({ problem: scmError });
 
-		await this.props.fetchDocumentMarkers(textEditorUri, !this.props.showPRComments);
+		await this.props.fetchDocumentMarkers(textEditorUri);
 		this.setState(state => (state.isLoading ? { isLoading: false } : null));
 		if (scmError && renderErrorCallback !== undefined) {
 			renderErrorCallback(mapFileScmErrorForTelemetry(scmError));
@@ -496,14 +491,9 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 									if (seenCodemarks[codemark.id]) return null;
 									seenCodemarks[codemark.id] = true;
 								}
-								// const hidden =
-								// 	!showHidden &&
-								// 	((codemark && (!codemark.pinned || codemark.status === "closed")) ||
-								// 		(docMarker.externalContent && !this.props.showPRComments));
 
 								const hidden =
-									(!showHidden && codemark && (!codemark.pinned || codemark.status === "closed")) ||
-									(docMarker.externalContent && !this.props.showPRComments);
+									!showHidden && codemark && (!codemark.pinned || codemark.status === "closed");
 								if (hidden) {
 									this.hiddenCodemarks[docMarker.id] = true;
 									return null;
@@ -533,11 +523,13 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 		const {
 			textEditorUri,
 			currentReviewId,
+			currentCodeErrorId,
 			currentPullRequestId,
 			composeCodemarkActive
 		} = this.props;
 
-		if (composeCodemarkActive || currentReviewId || currentPullRequestId) return null;
+		if (composeCodemarkActive || currentReviewId || currentCodeErrorId || currentPullRequestId)
+			return null;
 
 		if (textEditorUri === undefined) {
 			return (
@@ -545,8 +537,10 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 					<div key="no-codemarks" className="no-codemarks">
 						<h3>No file open.</h3>
 						<p>
-							Open a source file to to start discussing code with your teammates!{" "}
-							<a href="https://docs.codestream.com/userguide/workflow/discuss-code/">Learn more.</a>
+							Open a source file to start discussing code with your teammates!{" "}
+							<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
+								Learn more.
+							</a>
 						</p>
 					</div>
 				</div>
@@ -623,7 +617,9 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 						<h3>No codemarks in this file.</h3>
 						<p>
 							Discuss code by selecting a range and clicking an icon{" "}
-							<a href="https://docs.codestream.com/userguide/workflow/discuss-code/">show me how</a>
+							<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
+								show me how
+							</a>
 						</p>
 					</div>
 				</div>
@@ -650,11 +646,12 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 			documentMarkers,
 			metrics,
 			currentReviewId,
-			currentPullRequestId
+			currentPullRequestId,
+			currentCodeErrorId
 		} = this.props;
 		const { numLinesVisible } = this.state;
 
-		if (currentReviewId || currentPullRequestId) return null;
+		if (currentReviewId || currentPullRequestId || currentCodeErrorId) return null;
 
 		const numVisibleRanges = textEditorVisibleRanges.length;
 
@@ -743,10 +740,7 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 			// if there is already a codemark on this line, keep skipping to the next one
 			while (this.docMarkersByStartLine[startLine]) startLine++;
 			this.docMarkersByStartLine[startLine] = docMarker;
-			const hidden =
-				!showHidden &&
-				((codemark && (!codemark.pinned || codemark.status === "closed")) ||
-					(docMarker.externalContent && !this.props.showPRComments));
+			const hidden = !showHidden && codemark && (!codemark.pinned || codemark.status === "closed");
 			if (hidden) {
 				this.hiddenCodemarks[docMarker.id] = true;
 			} else {
@@ -891,7 +885,7 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 		this.setState({ multiLocationCodemarkForm: value });
 	};
 
-	closeCodemarkForm = (e?: Event) => {
+	closeCodemarkForm = (e?: SyntheticEvent) => {
 		this.setState({
 			multiLocationCodemarkForm: false,
 			codemarkFormError: undefined
@@ -977,7 +971,7 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 			}
 
 			// now get the new document markers
-			await this.props.fetchDocumentMarkers(this.props.textEditorUri!, !this.props.showPRComments);
+			await this.props.fetchDocumentMarkers(this.props.textEditorUri!);
 
 			if (docMarker) {
 				batch(() => {
@@ -1107,12 +1101,8 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 
 	renderHeader() {
 		const { fileNameToFilterFor = "", scmInfo } = this.props;
-		const repoId = scmInfo && scmInfo.scm ? scmInfo.scm.repoId : "";
-		const file = scmInfo && scmInfo.scm ? scmInfo.scm.file : fileNameToFilterFor;
 		return (
-			<PanelHeader title={fs.pathBasename(fileNameToFilterFor)} position="fixed">
-				<FileInfo repoId={repoId || ""} file={file || ""} />
-			</PanelHeader>
+			<PanelHeader title={fs.pathBasename(fileNameToFilterFor)} position="fixed"></PanelHeader>
 		);
 	}
 
@@ -1162,13 +1152,28 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 	}
 
 	close() {
-		const { currentReviewId, currentPullRequestId, composeCodemarkActive } = this.props;
+		const {
+			currentReviewId,
+			currentPullRequestId,
+			currentCodeErrorId,
+			composeCodemarkActive,
+			expandedPullRequestGroupIndex,
+			currentPullRequestProviderId
+		} = this.props;
 		if (currentReviewId) {
 			HostApi.instance.send(ReviewCloseDiffRequestType, {});
 			this.props.closeAllModals();
 		} else if (currentPullRequestId) {
 			HostApi.instance.send(LocalFilesCloseDiffRequestType, {});
+			// this.props.closeAllModals();
+			this.props.closePrDetailModal(
+				currentPullRequestProviderId,
+				currentPullRequestId,
+				expandedPullRequestGroupIndex
+			);
+		} else if (currentCodeErrorId) {
 			this.props.closeAllModals();
+			this.props.closeAllPanels();
 		} else if (composeCodemarkActive) {
 			this.closeCodemarkForm();
 		} else {
@@ -1180,8 +1185,11 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 		const {
 			currentReviewId,
 			currentPullRequestId,
+			currentCodeErrorId,
 			currentPullRequestProviderId,
-			composeCodemarkActive
+			composeCodemarkActive,
+			currentPullRequestCommentId,
+			expandedPullRequestGroupIndex
 		} = this.props;
 
 		const composeOpen = composeCodemarkActive ? true : false;
@@ -1189,16 +1197,20 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 			currentPullRequestId &&
 			(currentPullRequestProviderId === "gitlab*com" ||
 				currentPullRequestProviderId === "gitlab/enterprise");
+
 		return (
 			<Modal
-				noScroll
-				noPadding
-				onClose={isGitLabPR ? undefined : () => this.close()}
-				sidebarBackground={!!currentReviewId}
+				noScroll={!currentPullRequestCommentId ? true : undefined}
+				noPadding={!currentPullRequestCommentId ? true : undefined}
+				onClose={isGitLabPR || currentCodeErrorId ? undefined : () => this.close()}
+				sidebarBackground={!!currentReviewId || !!currentCodeErrorId}
+				translucent={currentPullRequestCommentId ? true : undefined}
 			>
 				<div style={{ overflow: isGitLabPR ? "visible" : "hidden" }}>
 					{currentReviewId ? (
 						<ReviewNav reviewId={currentReviewId} composeOpen={composeOpen} />
+					) : currentCodeErrorId ? (
+						<CodeErrorNav codeErrorId={currentCodeErrorId} composeOpen={composeOpen} />
 					) : currentPullRequestId ? (
 						currentPullRequestProviderId === "github*com" ||
 						currentPullRequestProviderId === "github/enterprise" ? (
@@ -1230,7 +1242,10 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 						<PRInfoModal onClose={() => this.setState({ showPRInfoModal: false })} />
 					)}
 					{this.state.isLoading ? null : this.renderCodemarks()}
-					{!currentReviewId && !currentPullRequestId && this.renderViewSelectors()}
+					{!currentReviewId &&
+						!currentCodeErrorId &&
+						!currentPullRequestId &&
+						this.renderViewSelectors()}
 				</div>
 			</Modal>
 		);
@@ -1290,20 +1305,6 @@ export class SimpleInlineCodemarks extends Component<Props, State> {
 	toggleShowHidden = () => {
 		this.enableAnimations(() => this.props.setCodemarksShowArchived(!this.props.showHidden));
 	};
-
-	// togglePRComments = () => {
-	// 	const { showPRCommentsField } = this.state;
-	// 	const newShowPRComments = !this.props.showPRComments;
-	// 	if (this.props.hasPRProvider)
-	// 		this.enableAnimations(() => {
-	// 			this.props.setUserPreference(["codemarksShowPRComments"], !!showPRCommentsField);
-	// 			this.props.fetchDocumentMarkers(this.props.textEditorUri!, !newShowPRComments);
-	// 		});
-	// 	else {
-	// 		this._waitingForPRProviderConnection = true;
-	// 		this.setState({ showPRInfoModal: true });
-	// 	}
-	// };
 
 	showAbove = () => {
 		const { firstVisibleLine } = this.props;
@@ -1377,6 +1378,7 @@ const EMPTY_OBJECT = {};
 
 const mapStateToProps = (state: CodeStreamState) => {
 	const { context, editorContext, preferences, teams, configs, documentMarkers, ide } = state;
+	const expandedPullRequestGroupIndex = context.currentPullRequest?.groupIndex;
 
 	const docMarkers = documentMarkers[editorContext.textEditorUri || ""] || EMPTY_ARRAY;
 	const numHidden = docMarkers.filter(
@@ -1408,6 +1410,7 @@ const mapStateToProps = (state: CodeStreamState) => {
 		hasPRProvider,
 		currentStreamId: context.currentStreamId,
 		currentReviewId: context.currentReviewId,
+		currentCodeErrorId: context.currentCodeErrorId,
 		currentPullRequestId: context.currentPullRequest ? context.currentPullRequest.id : undefined,
 		currentPullRequestProviderId: context.currentPullRequest
 			? context.currentPullRequest.providerId
@@ -1417,7 +1420,6 @@ const mapStateToProps = (state: CodeStreamState) => {
 		viewHeadshots: configs.showHeadshots,
 		showLabelText: false, //configs.showLabelText,
 		showHidden: context.codemarksShowArchived || false,
-		showPRComments: hasPRProvider && !!preferences.codemarksShowPRComments,
 		fileNameToFilterFor: editorContext.activeFile,
 		scmInfo: editorContext.scmInfo,
 		textEditorUri: editorContext.textEditorUri,
@@ -1434,11 +1436,16 @@ const mapStateToProps = (state: CodeStreamState) => {
 		webviewFocused: context.hasFocus,
 		lightningCodeReviewsEnabled: isFeatureEnabled(state, "lightningCodeReviews"),
 		composeCodemarkActive: context.composeCodemarkActive,
-		newPostEntryPoint: context.newPostEntryPoint
+		newPostEntryPoint: context.newPostEntryPoint,
+		currentPullRequestCommentId: context.currentPullRequest
+			? context.currentPullRequest.commentId
+			: undefined,
+		expandedPullRequestGroupIndex
 	};
 };
 
 export default connect(mapStateToProps, {
+	setUserPreference,
 	fetchDocumentMarkers,
 	setCodemarksFileViewStyle,
 	setComposeCodemarkActive,
@@ -1451,6 +1458,8 @@ export default connect(mapStateToProps, {
 	changeSelection,
 	setNewPostEntry,
 	closeAllModals,
+	closeAllPanels,
+	closePrDetailModal,
 	closePanel
 })(SimpleInlineCodemarks);
 

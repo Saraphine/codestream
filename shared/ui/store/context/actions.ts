@@ -1,15 +1,26 @@
-import { RegisterUserRequest } from "@codestream/protocols/agent";
+import { RegisterUserRequest, RepoProjectType } from "@codestream/protocols/agent";
 import { logError } from "../../logger";
 import { setUserPreference } from "../../Stream/actions";
 import { action } from "../common";
 import { ContextActionsType, ContextState, PostEntryPoint, Route } from "./types";
-import { WebviewPanels, WebviewModals, NewPullRequestBranch } from "@codestream/protocols/webview";
+import {
+	WebviewPanels,
+	WebviewModals,
+	NewPullRequestBranch,
+	HostDidReceiveRequestNotificationType,
+	CodeErrorData
+} from "@codestream/protocols/webview";
 import { CodemarkType } from "@codestream/protocols/api";
+import { HostApi } from "@codestream/webview/webview-api";
+import { TeamlessContext } from "@codestream/protocols/webview";
 
 export const reset = () => action("RESET");
 
 export const setContext = (payload: Partial<ContextState>) =>
 	action(ContextActionsType.SetContext, payload);
+
+export const setTeamlessContext = (payload: Partial<TeamlessContext>) =>
+	action(ContextActionsType.SetTeamlessContext, payload);
 
 export const _openPanel = (panel: string) => action(ContextActionsType.OpenPanel, panel);
 export const openPanel = (panel: string) => (dispatch, getState) => {
@@ -31,19 +42,46 @@ export const closeModal = () => {
 	return action(ContextActionsType.CloseModal);
 };
 
+export const closePrDetailModal = (
+	providerId: string,
+	id: string,
+	groupIndex?: string | undefined
+) => dispatch => {
+	dispatch(closeModal());
+	dispatch(openPanel(WebviewPanels.Sidebar));
+	dispatch(setCurrentCodemark());
+	dispatch(setCurrentReview());
+	dispatch(setCurrentCodeError());
+	dispatch(setCurrentPullRequest(providerId, id, "", "", "sidebar-diffs", groupIndex));
+	dispatch(clearCurrentErrorsInboxOptions());
+	dispatch(clearCurrentInstrumentationOptions());
+	dispatch(clearWantNewRelicOptions());
+	dispatch(setCurrentMethodLevelTelemetry(undefined));
+};
+
 export const closeAllPanels = () => dispatch => {
 	dispatch(closeModal());
 	dispatch(openPanel(WebviewPanels.Sidebar));
 	dispatch(setCurrentCodemark());
 	dispatch(setCurrentReview());
+	dispatch(setCurrentCodeError());
 	dispatch(clearCurrentPullRequest());
+	dispatch(clearCurrentErrorsInboxOptions());
+	dispatch(clearCurrentInstrumentationOptions());
+	dispatch(clearWantNewRelicOptions());
+	dispatch(setCurrentMethodLevelTelemetry(undefined));
 };
 
 export const closeAllModals = () => dispatch => {
 	dispatch(closeModal());
 	dispatch(setCurrentCodemark());
 	dispatch(setCurrentReview());
+	dispatch(setCurrentCodeError());
 	dispatch(clearCurrentPullRequest());
+	dispatch(clearCurrentErrorsInboxOptions());
+	dispatch(clearCurrentInstrumentationOptions());
+	dispatch(clearWantNewRelicOptions());
+	dispatch(setCurrentMethodLevelTelemetry(undefined));
 };
 
 export const focus = () => action(ContextActionsType.SetFocusState, true);
@@ -98,6 +136,9 @@ export const setCodemarksWrapComments = (enabled: boolean) =>
 export const setCurrentCodemark = (codemarkId?: string, markerId?: string) =>
 	action(ContextActionsType.SetCurrentCodemark, { codemarkId, markerId });
 
+export const setCurrentMethodLevelTelemetry = (data: any) =>
+	action(ContextActionsType.SetCurrentMethodLevelTelemetry, { data });
+
 export const setComposeCodemarkActive = (type: CodemarkType | undefined) =>
 	action(ContextActionsType.SetComposeCodemarkActive, { type });
 
@@ -141,6 +182,16 @@ export const setCurrentReview = (reviewId?: string, options?: { openFirstDiff?: 
 export const setCurrentReviewOptions = (options: any) =>
 	action(ContextActionsType.SetCurrentReviewOptions, { options });
 
+export const _setCurrentCodeError = (codeErrorId?: string, data?: any) =>
+	action(ContextActionsType.SetCurrentCodeError, { codeErrorId, data });
+
+export const setCurrentCodeError = (codeErrorId?: string, data?: CodeErrorData) => (
+	dispatch,
+	getState
+) => {
+	return dispatch(_setCurrentCodeError(codeErrorId, data));
+};
+
 export const setCurrentRepo = (id?: string, path?: string) =>
 	action(ContextActionsType.SetCurrentRepo, { id, path });
 
@@ -151,18 +202,70 @@ export const setCurrentPullRequest = (
 	providerId: string,
 	id: string,
 	commentId?: string,
-	source?: string
-) => action(ContextActionsType.SetCurrentPullRequest, { providerId, id, commentId, source });
+	source?: string,
+	view?: "details" | "sidebar-diffs",
+	groupIndex?: string | undefined
+) =>
+	action(ContextActionsType.SetCurrentPullRequest, {
+		providerId,
+		id,
+		commentId,
+		source,
+		view,
+		groupIndex
+	});
+
+export const setCurrentErrorsInboxOptions = (
+	stack?: string,
+	customAttributes?: string,
+	url?: string
+) => action(ContextActionsType.SetCurrentErrorsInboxOptions, { stack, customAttributes, url });
+
+export const setCurrentPullRequestNeedsRefresh = (
+	needsRefresh: boolean,
+	providerId: string,
+	pullRequestId: string
+) =>
+	action(ContextActionsType.SetCurrentPullRequestNeedsRefresh, {
+		needsRefresh,
+		providerId,
+		pullRequestId
+	});
+
+export const setCurrentInstrumentationOptions = (options?: any) =>
+	action(ContextActionsType.SetCurrentInstrumentationOptions, { options });
+
+export const setCurrentPixieDynamicLoggingOptions = (options?: any) =>
+	action(ContextActionsType.SetCurrentPixieDynamicLoggingOptions, { options });
+
+export const setWantNewRelicOptions = (
+	projectType: RepoProjectType,
+	repoId?: string,
+	path?: string,
+	projects?: { path: string; name?: string; version?: string }[]
+) => action(ContextActionsType.SetWantNewRelicOptions, { projectType, repoId, path, projects });
 
 export const setNewPullRequestOptions = (options?: { branch: NewPullRequestBranch }) =>
 	action(ContextActionsType.SetNewPullRequestOptions, { options });
+
+export const clearCurrentErrorsInboxOptions = () =>
+	action(ContextActionsType.SetCurrentErrorsInboxOptions, {});
+
+export const clearCurrentInstrumentationOptions = () =>
+	action(ContextActionsType.SetCurrentInstrumentationOptions, { options: {} });
+
+export const clearCurrentPixieDynamicLoggingOptions = () =>
+	action(ContextActionsType.SetCurrentPixieDynamicLoggingOptions, { options: {} });
+
+export const clearWantNewRelicOptions = () => action(ContextActionsType.SetWantNewRelicOptions, {});
 
 export const clearCurrentPullRequest = () =>
 	action(ContextActionsType.SetCurrentPullRequest, {
 		providerId: "",
 		id: "",
 		commentId: "",
-		source: ""
+		source: "",
+		view: undefined
 	});
 
 export const setOnboardStep = (step: number) => action(ContextActionsType.SetOnboardStep, { step });
@@ -209,6 +312,9 @@ export const goToSSOAuth = (
 	}
 };
 
+export const goToNewRelicSignup = (params = {}) =>
+	action(ContextActionsType.SetRoute, { name: Route.NewRelicSignup, params });
+
 export const goToSignup = (params = {}) =>
 	action(ContextActionsType.SetRoute, { name: Route.Signup, params });
 
@@ -219,6 +325,7 @@ export const goToJoinTeam = (params = {}) =>
 	action(ContextActionsType.SetRoute, { name: Route.JoinTeam, params });
 
 export const goToEmailConfirmation = (params: {
+	confirmationType: "signup" | "login";
 	email: string;
 	teamId?: string;
 	registrationParams: RegisterUserRequest;
@@ -227,8 +334,30 @@ export const goToEmailConfirmation = (params: {
 export const goToTeamCreation = (params = {}) =>
 	action(ContextActionsType.SetRoute, { name: Route.TeamCreation, params });
 
+export const goToCompanyCreation = (params = {}) =>
+	action(ContextActionsType.SetRoute, { name: Route.CompanyCreation, params });
+
 export const goToSetPassword = params =>
 	action(ContextActionsType.SetRoute, { name: Route.MustSetPassword, params });
 
 export const goToOktaConfig = params =>
 	action(ContextActionsType.SetRoute, { name: Route.OktaConfig, params });
+
+export const handlePendingProtocolHandlerUrl = (url: string | undefined) => (
+	dispatch,
+	getState
+) => {
+	HostApi.instance.emit(HostDidReceiveRequestNotificationType.method, { url: url });
+};
+
+export const setPendingProtocolHandlerUrl = (params: { url?: string; query?: any } = {}) =>
+	action(ContextActionsType.SetPendingProtocolHandlerUrl, { url: params.url, query: params.query });
+
+export const clearPendingProtocolHandlerUrl = (params = {}) =>
+	action(ContextActionsType.SetPendingProtocolHandlerUrl, { url: undefined, query: undefined });
+
+export const setForceRegion = (params: { region: string }) =>
+	action(ContextActionsType.SetTeamlessContext, { forceRegion: params.region });
+
+export const clearForceRegion = (params = {}) =>
+	action(ContextActionsType.SetTeamlessContext, { forceRegion: undefined });

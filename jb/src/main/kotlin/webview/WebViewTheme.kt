@@ -3,6 +3,8 @@ package com.codestream.webview
 import com.codestream.extensions.darken
 import com.codestream.extensions.lighten
 import com.codestream.extensions.opacity
+import com.codestream.system.Platform
+import com.codestream.system.platform
 import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -13,6 +15,34 @@ import javax.swing.UIManager
 class WebViewTheme(val name: String, val stylesheet: String) {
 
     companion object {
+        // Different themes and different OS's use different scroll bar color properties - this seems to be the
+        // best order of precedence :(
+        private val scrollbarCandidates = listOf("ScrollBar.thumbColor", "scrollbar", "ScrollBar.foreground")
+
+        // Only MacOS has rounded scrollbar track
+        private fun getScrollbarRoundedCorners(): String {
+            return when (platform) {
+                Platform.MAC_ARM64, Platform.MAC_X64 -> ".5rem"
+                else -> "0"
+            }
+        }
+
+        // Some OS / theme combinations return color without alpha, setting transparency doesn't work unless we
+        // explicitly give it an alpha channel
+        private fun normalizeColor(color: Color): Color {
+            return Color(color.red, color.green, color.blue, 255)
+        }
+
+        private fun getScrollbarThumbColor(): Color {
+            for (colorKey in scrollbarCandidates) {
+                val color: Color? = UIManager.getColor(colorKey)
+                if (color != null) {
+                    return normalizeColor(color)
+                }
+            }
+            return Color(152, 152, 152, 1)
+        }
+
         fun build(): WebViewTheme {
             val font = UIUtil.getLabelFont()
             // TODO local(font.family)
@@ -29,33 +59,34 @@ class WebViewTheme(val name: String, val stylesheet: String) {
                 UIUtil.getLabelFontColor(UIUtil.FontColor.NORMAL).darken(20)
             }
             val border = JBColor.border()
-            val link = JBColor.link()
+            val link = JBUI.CurrentTheme.Link.Foreground.ENABLED
             val buttonBg = JBColor.namedColor("Button.default.startBackground",
                 JBUI.CurrentTheme.Focus.defaultButtonColor())
 
-            val scrollBarBg = UIManager.getColor("ScrollBar.background")
-            val scrollBarFg = UIManager.getColor("ScrollBar.foreground")
+            val scrollBarTrack = UIManager.getColor("ScrollBar.background")
+            val scrollBarThumb: Color
+            val scrollBarThumbHighlight: Color
 
             val appBgColor = bg
-            var appBgColorDarker: Color
-            var appBgColorHover: Color
-            var baseBgColor: Color
-            var baseBorderColor: Color
-            var panelToolBgColor: Color
+            val appBgColorDarker: Color
+            val appBgColorHover: Color
+            val baseBgColor: Color
+            val baseBorderColor: Color
+            val panelToolBgColor: Color
             val panelSectionFgColor = fg.opacity(80)
             val panelSectionHeaderBgColor = bg
             val panelSectionHeaderFgColor = fg.opacity(80)
             val textColor = fg.opacity(80)
             val textColorHighlight = fg
             val textColorSubtle = fg.opacity(60)
-            var textColorSubtleExtra: Color
+            val textColorSubtleExtra: Color
             val textColorInfo = link
-            var textColorInfoMuted: Color
+            val textColorInfoMuted: Color
             val lineNumbersFgColor = fg.opacity(40)
             val buttonBgColor = buttonBg
-            var buttonBgColorHover: Color
-            var textFocusBorderColor: Color
-            val buttonFgColor = JBColor.namedColor( "Button.default.foreground", textColor)
+            val buttonBgColorHover: Color
+            val textFocusBorderColor: Color
+            val buttonFgColor = JBColor.namedColor("Button.default.foreground", textColor)
 
             if (ColorUtil.isDark(bg)) {
                 appBgColorDarker = bg.darken(4)
@@ -73,6 +104,10 @@ class WebViewTheme(val name: String, val stylesheet: String) {
                 textFocusBorderColor = textColorInfoMuted.opacity(60)
 
                 buttonBgColorHover = buttonBg.lighten(10)
+
+                scrollBarThumb = getScrollbarThumbColor().opacity(30)
+
+                scrollBarThumbHighlight = scrollBarThumb.lighten(10)
             } else {
                 appBgColorDarker = bg.lighten(4)
                 appBgColorHover = bg.darken(1.5F)
@@ -89,14 +124,22 @@ class WebViewTheme(val name: String, val stylesheet: String) {
                 textFocusBorderColor = textColorInfoMuted.opacity(60)
 
                 buttonBgColorHover = buttonBg.darken(10)
+
+                scrollBarThumb = getScrollbarThumbColor().opacity(50)
+
+                scrollBarThumbHighlight = scrollBarThumb.darken(60)
             }
 
             val toolWindowHeaderBackground = JBColor.namedColor("ToolWindow.Header.background", baseBgColor)
-            val toolWindowHeaderInactiveBackground = JBColor.namedColor("ToolWindow.Header.inactiveBackground",
-                baseBgColor)
-            val toolWindowHeaderBorder = JBColor.namedColor("ToolWindow.Header.borderColor",
-                JBColor.namedColor("Borders.ContrastBorderColor", baseBorderColor))
+            val toolWindowHeaderInactiveBackground = Color(0, 0, 0 ,0)
+            val toolWindowHeaderBorder = fg.opacity(20)
             val treeBackground = JBColor.namedColor("Tree.background", baseBgColor)
+
+            val listActiveBackground = UIUtil.getListSelectionBackground(true)
+            val listActiveForeground = UIUtil.getListSelectionForeground(true)
+            val listActiveOutline = UIUtil.getListSelectionBackground(true)
+            val listInactiveBackground = UIUtil.getListSelectionBackground(false)
+            val listInactiveForeground = UIUtil.getListSelectionForeground(false)
 
             val name = if (isDarkTheme()) "vscode-dark" else "vscode-light"
             val stylesheet = """
@@ -142,9 +185,17 @@ body {
     --sidebar-header-background: ${toolWindowHeaderInactiveBackground.rgba};
     --sidebar-header-foreground: ${panelSectionHeaderFgColor.rgba};
     --sidebar-header-border: ${toolWindowHeaderBorder.rgba};    
+    
+    --list-active-background: ${listActiveBackground.rgba};
+    --list-active-foreground: ${listActiveForeground.rgba};
+    --list-active-outline: ${listActiveOutline.rgba};
+    --list-inactive-background: ${listInactiveBackground.rgba};
+    --list-inactive-foreground: ${listInactiveForeground.rgba};
 
-    --scrollbar-thumb: ${scrollBarBg.rgba};
-    --scrollbar-thumb-hover: ${scrollBarFg.rgba};
+    --scrollbar-track: ${scrollBarTrack.rgba};
+    --scrollbar-thumb: ${scrollBarThumb.rgba};
+    --scrollbar-thumb-hover: ${scrollBarThumbHighlight.rgba};
+    --scrollbar-rounding: ${getScrollbarRoundedCorners()}
 }
         """
 

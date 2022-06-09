@@ -15,9 +15,13 @@
 			"https-proxy-agent": ["@types/https-proxy-agent"],
 			"opn": ["@types/opn"]
 		},
+		"skipDefaultLibCheck": true,
+		"skipLibCheck": true,
 		"sourceMap": true,
 		"strict": true,
-		"target": "es2017"
+		"target": "es2017",
+		"useUnknownInCatchVariables": false,
+		"resolveJsonModule": true
 	},
 	"exclude": ["node_modules"]
 }

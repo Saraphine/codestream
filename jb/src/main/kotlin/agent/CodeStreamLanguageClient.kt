@@ -22,9 +22,14 @@ import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.psi.search.FilenameIndex
+import com.intellij.psi.search.GlobalSearchScope
 import git4idea.GitUtil
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import org.apache.commons.io.FileUtils
+import org.apache.commons.io.filefilter.SuffixFileFilter
+import org.apache.commons.io.filefilter.TrueFileFilter
 import org.eclipse.lsp4j.ConfigurationParams
 import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
@@ -38,6 +43,7 @@ import org.eclipse.lsp4j.WorkspaceFolder
 import org.eclipse.lsp4j.jsonrpc.services.JsonNotification
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest
 import org.eclipse.lsp4j.services.LanguageClient
+import java.io.File
 import java.util.concurrent.CompletableFuture
 
 class CodeStreamLanguageClient(private val project: Project) : LanguageClient {
@@ -55,6 +61,7 @@ class CodeStreamLanguageClient(private val project: Project) : LanguageClient {
     @JsonNotification("codestream/didChangePullRequestComments")
     fun didChangePullRequestComments(notification: DidChangePullRequestCommentsNotification) {
         project.editorService?.updatePullRequestDiffMarkers()
+        project.webViewService?.postNotification("codestream/didChangePullRequestComments", notification)
     }
 
     @JsonNotification("codestream/didChangeData")
@@ -166,9 +173,35 @@ class CodeStreamLanguageClient(private val project: Project) : LanguageClient {
         return CompletableFuture.completedFuture(true)
     }
 
+    @JsonRequest("codestream/files/search")
+    fun fileSearch(json: JsonElement): CompletableFuture<FileSearchResponse> {
+        val request = gson.fromJson<FileSearchRequest>(json[0])
+
+        val fileFuture = CompletableFuture<FileSearchResponse>()
+        ApplicationManager.getApplication().invokeLater {
+            val files = FilenameIndex.getFilesByName(project, request.path, GlobalSearchScope.projectScope(project)).map { it.virtualFile.path}
+            fileFuture.complete(FileSearchResponse(files))
+        }
+        return fileFuture
+    }
+
     @JsonNotification("codestream/didSetEnvironment")
     fun didSetEnvironment(environmentInfo: EnvironmentInfo) {
         project.sessionService?.environmentInfo = environmentInfo
+    }
+
+    @JsonNotification("codestream/pixie/dynamicLoggingEvent")
+    fun pixieDynamicLoggingEvent(json: JsonElement) {
+        ApplicationManager.getApplication().invokeLater {
+            project.codeStream?.show {
+                project.webViewService?.postNotification("codestream/pixie/dynamicLoggingEvent", json, true)
+            }
+        }
+    }
+
+    @JsonNotification("codestream/nr/didResolveStackTraceLine")
+    fun didResolveStackTraceLine(json: JsonElement) {
+        project.webViewService?.postNotification("codestream/nr/didResolveStackTraceLine", json, true)
     }
 
     override fun workspaceFolders(): CompletableFuture<MutableList<WorkspaceFolder>> {
@@ -268,6 +301,10 @@ class DidChangeApiVersionCompatibilityNotification(
 )
 
 class OpenUrlRequest(val url: String)
+
+class FileSearchRequest(val basePath: String, val path: String)
+
+class FileSearchResponse(val files: List<String>)
 
 enum class ApiVersionCompatibility {
     @SerializedName("apiCompatible")

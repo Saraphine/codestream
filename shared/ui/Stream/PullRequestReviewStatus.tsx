@@ -107,6 +107,7 @@ export const PullRequestReviewStatus = (props: {
 
 	const { pr, opinionatedReviews = [] } = props;
 	const pendingReviewers = pr.reviewRequests.nodes;
+	const pendingReviewersTeams = pendingReviewers.filter(_ => !_.requestedReviewer).length;
 
 	const reviewState = useMemo(() => {
 		const approvals = opinionatedReviews.filter(review => review.state === "APPROVED");
@@ -241,12 +242,24 @@ export const PullRequestReviewStatus = (props: {
 				<PRShortStatusRow>
 					<div style={{ width: "30px", height: "30px" }} />
 					<div className="middle">
-						{pendingReviewers.map(review => (
+						{pendingReviewersTeams && (
 							<div style={{ padding: "5px 0" }}>
-								<PRHeadshotName person={review.requestedReviewer} />{" "}
-								<span className="subtle">was requested for review</span>
+								<b>
+									{pendingReviewersTeams} {pendingReviewersTeams === 1 ? "team" : "teams"}
+								</b>{" "}
+								<span className="subtle">
+									{pendingReviewersTeams === 1 ? "was" : "were"} requested for review
+								</span>
 							</div>
-						))}
+						)}
+						{pendingReviewers
+							.filter(review => review.requestedReviewer)
+							.map(review => (
+								<div style={{ padding: "5px 0" }}>
+									<PRHeadshotName person={review.requestedReviewer} />{" "}
+									<span className="subtle">was requested for review</span>
+								</div>
+							))}
 					</div>
 				</PRShortStatusRow>
 			)}

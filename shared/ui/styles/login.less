@@ -55,13 +55,18 @@
 		position: absolute;
 		left: 0;
 		right: 0;
-		transform: translateY(20px);
+		transform: translateY(19px);
 		border-bottom: 1px solid @base-border-color;
 		z-index: 2;
 	}
 	.or {
 		display: inline-block;
 		background: var(--sidebar-background);
+		padding: 0 10px;
+	}
+	.app-or {
+		display: inline-block;
+		background: var(--app-background-color);
 		padding: 0 10px;
 	}
 }
@@ -256,4 +261,36 @@
 			margin: 0;
 		}
 	}
+}
+
+.key-value-actions {
+	display: -webkit-flex;
+	display: flex;
+	list-style-type: none;
+	padding: 0;
+	justify-content: flex-end;
+}
+
+.key-value-key {
+	margin-right: auto;
+}
+.key-value-value .btn {
+	padding: 5px 10px;
+}
+
+@spacer: 1rem;
+.pt-1 {
+	padding-top: (@spacer * 0.25) !important;
+}
+.pt-2 {
+	padding-top: (@spacer * 0.5) !important;
+}
+.pt-3 {
+	padding-top: (@spacer) !important;
+}
+.pt-4 {
+	padding-top: (@spacer * 1.5) !important;
+}
+.pt-5 {
+	padding-top: (@spacer * 3) !important;
 }

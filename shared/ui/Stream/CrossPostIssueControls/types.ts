@@ -26,6 +26,17 @@ export interface ProviderDisplay {
 
 	supportsPRManagement?: boolean;
 	versionMinimum?: string;
+	checkVersionUrl?: string;
+	invalidHosts?: Array<string>;
+
+	helpPATUrl?: string;
+	namePAT?: string;
+
+	directPAT?: {
+		path: string;
+		scopesParam: string;
+		descriptionParam?: string;
+	};
 }
 
 export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
@@ -52,12 +63,13 @@ export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
 		icon: "bitbucket",
 		urlPlaceholder: "https://bitbucket.myorg.com",
 		helpUrl:
-			"https://confluence.atlassian.com/bitbucketserver/personal-access-tokens-939515499.html"
+			"https://confluence.atlassian.com/bitbucketserver/personal-access-tokens-939515499.html",
+		invalidHosts: ["bitbucket.org"]
 	},
-	clubhouse: {
-		displayName: "Clubhouse",
-		icon: "clubhouse",
-		helpUrl: "https://help.clubhouse.io/hc/en-us/articles/205701199-Clubhouse-API-Tokens",
+	shortcut: {
+		displayName: "Shortcut",
+		icon: "shortcut",
+		helpUrl: "https://help.shortcut.com/hc/en-us/articles/205701199-Clubhouse-API-Tokens",
 		supportsStartWork: true
 	},
 	linear: {
@@ -79,33 +91,48 @@ export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
 		hasCustomFilters: true,
 		customFilterExample: "Example: <code>is:open milestone:jan assignee:@me</code>",
 		customFilterHelp:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries/">custom queries</a> for a detailed list of qualifiers. ',
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github">custom queries</a> for a detailed list of qualifiers. ',
 		customPullRequestFilterHelpLink:
 			//https://docs.github.com/en/github/searching-for-information-on-github/searching-on-github/searching-issues-and-pull-requests
-			"https://docs.codestream.com/userguide/faq/custom-queries/",
+			"https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github",
 		customPullRequestFilterExample:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries/">custom queries</a> for a detailed list of qualifiers. ',
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github">custom queries</a> for a detailed list of qualifiers. ',
 		supportsStartWork: true,
-		supportsPRManagement: true
+		supportsPRManagement: true,
+		helpPATUrl:
+			"https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token",
+		directPAT: {
+			path: "settings/tokens/new",
+			descriptionParam: "description",
+			scopesParam: "scopes"
+		}
 	},
 	github_enterprise: {
 		displayName: "GitHub Enterprise",
+		shortDisplayName: "GitHub",
 		icon: "mark-github",
 		urlPlaceholder: "https://git.myorg.com",
 		helpUrl:
-			"https://help.github.com/en/enterprise/2.15/user/articles/creating-a-personal-access-token-for-the-command-line",
+			"https://docs.github.com/en/enterprise-server@3.4/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token",
 		boardLabel: "repo",
 		listLabel: "type",
 		cardLabel: "issue",
 		hasCustomFilters: true,
 		customFilterExample: "Example: <code>is:open milestone:jan assignee:@me</code>",
 		customFilterHelp:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries/">custom queries</a> for a detailed list of qualifiers. ',
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github">custom queries</a> for a detailed list of qualifiers. ',
 		customPullRequestFilterExample:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries/">custom queries</a> for a detailed list of qualifiers. ',
-		customPullRequestFilterHelpLink: "https://docs.codestream.com/userguide/faq/custom-queries/",
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github">custom queries</a> for a detailed list of qualifiers. ',
+		customPullRequestFilterHelpLink:
+			"https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#github",
 		supportsStartWork: true,
-		supportsPRManagement: true
+		supportsPRManagement: true,
+		invalidHosts: ["github.com"],
+		directPAT: {
+			path: "settings/tokens/new",
+			descriptionParam: "description",
+			scopesParam: "scopes"
+		}
 	},
 	gitlab: {
 		displayName: "GitLab",
@@ -116,13 +143,14 @@ export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
 		hasCustomFilters: true,
 		customFilterExample: "Example: <code>scope=assigned_to_me&project_id=22</code> ",
 		customFilterHelp:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries-gl/#searching-issues">this article</a> for search syntax and the available parameters. To search issues for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab">this article</a> for search syntax and the available parameters. To search issues for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
 		customPullRequestFilterExample:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries-gl/#searching-merge-requests">this article</a> for search syntax and the available parameters. To search merge requests for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab">this article</a> for search syntax and the available parameters. To search merge requests for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
 		customPullRequestFilterHelpLink:
-			"https://docs.codestream.com/userguide/faq/custom-queries-gl/#searching-merge-requests",
+			"https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab",
 		supportsStartWork: true,
-		supportsPRManagement: true
+		supportsPRManagement: true,
+		helpPATUrl: "https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html"
 	},
 	gitlab_enterprise: {
 		displayName: "GitLab Self-Managed",
@@ -136,14 +164,16 @@ export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
 		hasCustomFilters: true,
 		customFilterExample: "Example: <code>scope=assigned_to_me&project_id=22</code> ",
 		customFilterHelp:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries-gl/#searching-issues">this article</a> for search syntax and the available parameters. To search issues for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab">this article</a> for search syntax and the available parameters. To search issues for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
 		customPullRequestFilterExample:
-			'See <a href="https://docs.codestream.com/userguide/faq/custom-queries-gl/#searching-merge-requests">this article</a> for search syntax and the available parameters. To search merge requests for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
+			'See <a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab">this article</a> for search syntax and the available parameters. To search merge requests for a project, use parameter <code>project_id=X</code>. Use an <code>&</code> between parameters in the query. ',
 		customPullRequestFilterHelpLink:
-			"https://docs.codestream.com/userguide/faq/custom-queries-gl/#searching-merge-requests",
+			"https://docs.newrelic.com/docs/codestream/how-use-codestream/pull-requests#gitlab",
 		supportsStartWork: true,
 		supportsPRManagement: true,
-		versionMinimum: "12.10"
+		versionMinimum: "12.10",
+		checkVersionUrl: "https://docs.newrelic.com/docs/codestream/troubleshooting/glsm-version/",
+		invalidHosts: ["gitlab.com"]
 	},
 	jira: {
 		displayName: "Jira",
@@ -156,12 +186,13 @@ export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
 		customFilterExample: "Example: assignee=currentuser() AND status!=Closed",
 		customFilterHelp:
 			'See <a href="https://confluence.atlassian.com/jirasoftwareserver/advanced-searching-939938733.html">Jira Advanced Searching</a> for documentation on JQL. ',
-		hasCardBasedWorkflow: true
+		hasCardBasedWorkflow: true,
+		namePAT: "API Token"
 	},
 	jiraserver: {
 		displayName: "Jira Server",
 		icon: "jira",
-		urlPlaceholder: "https://jira.myorg.com",
+		urlPlaceholder: "https://mycompany.com/jira",
 		boardLabel: "project",
 		listLabel: "type",
 		cardLabel: "ticket",
@@ -170,7 +201,13 @@ export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
 		customFilterExample: "Example: assignee=currentuser() AND status!=Closed",
 		customFilterHelp:
 			'See <a href="https://confluence.atlassian.com/jirasoftwareserver/advanced-searching-939938733.html">Jira Advanced Searching</a> for documentation on JQL. ',
-		hasCardBasedWorkflow: true
+		hasCardBasedWorkflow: true,
+		invalidHosts: ["atlassian.net"],
+		versionMinimum: "8.14.0",
+		checkVersionUrl:
+			"https://docs.newrelic.com/docs/codestream/troubleshooting/jira-server-version/",
+		helpUrl:
+			"https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html"
 	},
 	trello: {
 		displayName: "Trello",
@@ -200,8 +237,13 @@ export const PROVIDER_MAPPINGS: { [provider: string]: ProviderDisplay } = {
 		supportsStartWork: true
 	},
 	slack: { displayName: "Slack", icon: "slack", groupName: "Workspace" },
-	msteams: { displayName: "Microsoft Teams", icon: "msteams", groupName: "Organization" }
+	msteams: { displayName: "Microsoft Teams", icon: "msteams", groupName: "Organization" },
 	//okta: { displayName: "Okta", icon: "okta" } -- suppress display under "Active Integrations"
+	newrelic: {
+		displayName: "New Relic",
+		icon: "newrelic",
+		getUrl: "https://newrelic.com"
+	}
 };
 
 const ucFirst = (string = "") => string.charAt(0).toUpperCase() + string.slice(1);

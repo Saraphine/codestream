@@ -156,6 +156,33 @@ export const GetRepoScmStatusesRequestType = new RequestType<
 	void
 >("codestream/scm/repo/statuses");
 
+export enum RepoProjectType {
+	Unknown = "Unknown",
+	NodeJS = "NodeJS",
+	Java = "Java",
+	DotNetCore = "DotNetCore",
+	DotNetFramework = "DotNetFramework"
+	/*
+	PHP = "PHP",
+	CSharp = "C#"
+	*/
+}
+
+export interface IdentifyRepoResult {
+	projectType: RepoProjectType;
+	projects?: { path: string; name?: string }[];
+}
+
+export interface NewRelicOptions {
+	projectType?: RepoProjectType;
+	/**
+	 * Collection of projects (folders)
+	 */
+	projects?: { path: string; name?: string }[];
+	repoId?: string;
+	path?: string;
+}
+
 export interface ReposScm {
 	id?: string;
 	path: string;
@@ -175,12 +202,42 @@ export interface ReposScm {
 	/**
 	 * this has a subset of what GitRemote has
 	 */
-	remotes?: { repoPath: string; path: string; domain: string; webUrl: string }[];
+	remotes?: {
+		repoPath: string;
+		name?: string;
+		path: string;
+		uri?: any;
+		domain: string;
+		webUrl: string;
+		remoteWeight?: number;
+		types?: { url: string; type: string }[];
+		rawUrl?: string;
+	}[];
 	/**
 	 * If this repo has a remote that is managed and connected to a provider,
 	 * return the providerId
 	 */
 	providerId?: string;
+	/**
+	 * Project type (NodeJS, Ruby, Python)
+	 */
+	projectType?: RepoProjectType;
+	projects?: { path: string; name?: string }[];
+
+	directories?: DirectoryTree;
+}
+
+export interface DirectoryTree {
+	depth: number;
+	children: DirectoryTree[];
+	/** name of the directory */
+	name: string;
+	/** path to the directory */
+	fullPath: string;
+	/** repo id */
+	id: string | undefined;
+	/** in a path like foo/bar this is ["foo","bar"] */
+	partialPath: string[];
 }
 
 export interface GetReposScmRequest {
@@ -197,10 +254,28 @@ export interface GetReposScmRequest {
 	 * Set this flag to also return the remotes for each repo as well as a provider guess
 	 */
 	includeProviders?: boolean;
+
+	/**
+	 * Set this flag to also return the remotes
+	 */
+	includeRemotes?: boolean;
 	/**
 	 * Set this flag to also return the providerId if a repo is connected to one
 	 */
 	includeConnectedProviders?: boolean;
+
+	/**
+	 * if set to a number, will return a tree structure of directories within this repo up to the specific depth
+	 *
+	 * @type {number}
+	 * @memberof GetReposScmRequest
+	 */
+	withSubDirectoriesDepth?: number;
+
+	/**
+	 * Set this flag to have the agent try to guess what kind of project the repo represents
+	 */
+	guessProjectTypes?: boolean;
 }
 
 export interface GetReposScmResponse {
@@ -243,6 +318,7 @@ export const GetFileScmInfoRequestType = new RequestType<
 
 export interface GetRangeScmInfoRequest {
 	uri: string;
+	gitSha?: string;
 	range: Range;
 	dirty?: boolean;
 	contents?: string;
@@ -262,6 +338,7 @@ export interface GetRangeScmInfoResponse {
 		repoPath: string;
 		repoId?: string;
 		revision: string;
+		fixedGitSha?: boolean;
 		/**
 		 * authors come from git blame. we enrich the list with IDs
 		 * and usernames if the git blame email addresses match members
@@ -446,9 +523,9 @@ export interface GetFileContentsAtRevisionRequest {
 	/**
 	 * CodeStream repositoryId
 	 * */
-	repoId: string;
+	repoId?: string;
 	/**
-	 * relative file path
+	 * Absolute file path or relative if repoId is specified
 	 * */
 	path: string;
 	/**

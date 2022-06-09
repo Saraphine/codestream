@@ -61,6 +61,7 @@ export interface GitLabMergeRequestWrapper {
 		onlyAllowMergeIfPipelineSucceeds: boolean;
 		allowMergeOnSkippedPipeline: boolean;
 		onlyAllowMergeIfAllDiscussionsAreResolved: boolean;
+		squashOption: "never" | "always" | "default_on" | "default_off";
 		/*
 		merge:
 		Merge commit
@@ -232,6 +233,7 @@ export interface GitLabMergeRequest {
 	/* this might not exist in all editions*/
 	commitCount?: number;
 	createdAt: string;
+	conflicts?: boolean;
 	/* this might not exist in all editions*/
 	currentUserTodos?: {
 		nodes: {
@@ -261,7 +263,10 @@ export interface GitLabMergeRequest {
 	id: string;
 	idComputed: string;
 	iid: string;
-	isDraft: boolean;
+	// from gitlab
+	draft?: boolean;
+	// for CodeStream
+	isDraft?: boolean;
 	labels: {
 		nodes: GitLabLabel[];
 	};
@@ -409,7 +414,6 @@ export interface GitLabMergeRequest {
 	};
 	viewerDidAuthor: boolean;
 	webUrl: string;
-	workInProgress: boolean;
 	baseWebUrl: string;
 
 	/**
@@ -428,5 +432,6 @@ export interface GitLabMergeRequest {
 		approvedBy?: boolean;
 		approvals?: boolean;
 		currentUserTodos?: boolean;
+		draft?: boolean;
 	};
 }

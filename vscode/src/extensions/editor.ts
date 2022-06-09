@@ -151,7 +151,7 @@ export namespace Editor {
 
 		editor.setDecorations(highlightDecorationType, clear ? [] : [range]);
 		// Don't reveal on highlight right now -- webview probably needs a flag to control this
-		// editor.revealRange(range, TextEditorRevealType.Default);
+		editor.revealRange(range, TextEditorRevealType.InCenter);
 		return true;
 	}
 

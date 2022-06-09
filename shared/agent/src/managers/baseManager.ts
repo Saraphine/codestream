@@ -1,5 +1,9 @@
 "use strict";
 import { RawRTMessage } from "../api/apiProvider";
+import { Container, SessionContainer } from "../container";
+import { Logger } from "../logger";
+import { ReportingMessageType } from "../protocol/agent.protocol";
+import { CSEntity, CSMarkerLocations } from "../protocol/api.protocol.models";
 import { CodeStreamSession } from "../session";
 import { debug, log } from "../system";
 import { IndexParams } from "./cache";
@@ -90,28 +94,45 @@ export abstract class ManagerBase<T> {
 
 		const resolved = await Promise.all(
 			message.data.map(async (data: any) => {
-				const criteria = this.fetchCriteria(data as T);
-				const cached = await this.cacheGet(criteria);
+				try {
+					if (!data) return undefined;
 
-				const action = getCacheUpdateAction(data, cached);
-				// We need to return the cached item still until the UI handles updates via api calls the same as notifications
-				if (action === "skip") return onlyIfNeeded ? undefined : cached;
-				if (action === "update") {
-					// TODO: Should we fall-through to query if we don't have the cached data, but we do have a full object?
-					const updatedEntity: T = cached == null ? data : resolve<T>(cached as any, data);
-					return this.cacheSet(updatedEntity, cached);
-				}
+					const criteria = this.fetchCriteria(data as T);
+					const cached = await this.cacheGet(criteria);
 
-				// Fall-through to query for the data
-				let entity: T;
-				if (this.forceFetchToResolveOnCacheMiss || isDirective(data)) {
-					entity = await this.fetch(criteria);
-				} else {
-					entity = data;
-				}
+					const action = getCacheUpdateAction(data, cached);
+					// We need to return the cached item still until the UI handles updates via api calls the same as notifications
+					if (action === "skip") return onlyIfNeeded ? undefined : cached;
+					if (action === "update") {
+						// TODO: Should we fall-through to query if we don't have the cached data, but we do have a full object?
+						const updatedEntity: T = cached == null ? data : resolve<T>(cached as any, data);
+						return this.cacheSet(updatedEntity, cached);
+					}
 
-				if (entity != null) {
-					return this.cacheSet(entity);
+					// Fall-through to query for the data
+					let entity: T;
+					if (this.forceFetchToResolveOnCacheMiss || isDirective(data)) {
+						entity = await this.fetch(criteria);
+					} else {
+						entity = data;
+					}
+
+					if (entity != null) {
+						return this.cacheSet(entity);
+					}
+				} catch (e) {
+					Logger.error(e);
+					Container.instance().errorReporter.reportMessage({
+						source: "agent",
+						type: ReportingMessageType.Error,
+						message: "Error resolving RT message",
+						extra: {
+							data,
+							error: e,
+							type: message.type,
+							entityName: this.getEntityName()
+						}
+					});
 				}
 
 				return undefined;
@@ -119,6 +140,33 @@ export abstract class ManagerBase<T> {
 		);
 
 		return resolved.filter(Boolean) as T[];
+	}
+
+	cacheResponse(response: any) {
+		const container = SessionContainer.instance();
+		this.cacheResponseEntities(container.codemarks, [response.codemark]);
+		this.cacheResponseEntities(container.codemarks, response.codemarks);
+		this.cacheResponseEntities(container.codeErrors, response.codeErrors);
+		this.cacheResponseEntities(container.companies, response.companies);
+		this.cacheResponseEntities(container.markers, response.markers);
+		this.cacheResponseEntities(container.markerLocations, response.markerLocations);
+		this.cacheResponseEntities(container.posts, response.posts);
+		this.cacheResponseEntities(container.repos, response.repos);
+		this.cacheResponseEntities(container.streams, response.streams);
+		this.cacheResponseEntities(container.users, response.users);
+	}
+
+	private cacheResponseEntities<T extends CSEntity | CSMarkerLocations>(
+		manager: ManagerBase<T>,
+		entities: T[] | undefined
+	) {
+		if (!entities) return;
+		try {
+			entities = entities.filter(e => e && !isDirective(e));
+			manager.cache.set(entities);
+		} catch (ex) {
+			Logger.warn("Error caching response entities: " + ex.message);
+		}
 	}
 
 	cacheGet(criteria: KeyValue<T>[]): Promise<T | undefined> {

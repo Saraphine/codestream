@@ -1,6 +1,5 @@
 "use strict";
-import { CodeStreamEnvironmentInfo } from "./agent.protocol";
-import { CreateReviewChangesetsRequest } from "./agent.protocol.reviews";
+import { CodeStreamEnvironmentInfo, EnvironmentHost } from "./agent.protocol";
 import { RepoScmStatus } from "./agent.protocol.scm";
 import {
 	Attachment,
@@ -9,6 +8,8 @@ import {
 	CSApiCapabilities,
 	CSApiFeatures,
 	CSChannelStream,
+	CSCodeError,
+	CSCodeErrorStatus,
 	CSCodemark,
 	CSCompany,
 	CSDirectStream,
@@ -21,9 +22,9 @@ import {
 	CSPost,
 	CSRepository,
 	CSReview,
-	CSReviewChangeset,
 	CSReviewDiffs,
 	CSReviewStatus,
+	CSStackTraceInfo,
 	CSStream,
 	CSTag,
 	CSTeam,
@@ -47,11 +48,13 @@ export enum ApiErrors {
 
 export enum LoginResult {
 	Success = "SUCCESS",
+	WebMail = "EMAIL_IS_WEBMAIL",
 	InvalidCredentials = "INVALID_CREDENTIALS",
 	InvalidToken = "TOKEN_INVALID",
 	ExpiredToken = "TOKEN_EXPIRED",
 	TokenNotFound = "TOKEN_NOT_FOUND",
 	NotConfirmed = "NOT_CONFIRMED",
+	NotInCompany = "USER_NOT_IN_COMPANY",
 	NotOnTeam = "USER_NOT_ON_TEAM",
 	Unknown = "UNKNOWN",
 	VersionUnsupported = "VERSION_UNSUPPORTED",
@@ -64,17 +67,35 @@ export enum LoginResult {
 	SignInRequired = "SIGNIN_REQUIRED",
 	MaintenanceMode = "MAINTENANCE_MODE",
 	MustSetPassword = "MUST_SET_PASSWORD",
-	Timeout = "TIMEOUT"
+	Timeout = "TIMEOUT",
+	ExpiredCode = "CODE_EXPIRED",
+	TooManyAttempts = "TOO_MANY_ATTEMPTS",
+	InvalidCode = "CODE_INVALID"
 }
 
 export interface CSCompleteSignupRequest {
 	token: string;
+	nrAccountId?: number;
 }
 
 export interface CSLoginRequest {
 	email: string;
 	password?: string;
 	token?: string;
+}
+
+export interface CSCodeLoginRequest {
+	email: string;
+	loginCode: string;
+}
+
+export interface CSEligibleJoinCompany {
+	codeHostJoining?: string[];
+	domainJoining?: string[];
+	id: string;
+	memberCount?: number;
+	name: string;
+	host?: EnvironmentHost;
 }
 
 export interface CSLoginResponse {
@@ -96,14 +117,19 @@ export interface CSLoginResponse {
 	capabilities?: CSApiCapabilities;
 	features?: CSApiFeatures;
 	environmentInfo: CodeStreamEnvironmentInfo;
+	eligibleJoinCompanies?: CSEligibleJoinCompany[];
+	accountIsConnected?: boolean;
+	isWebmail?: boolean;
+	setEnvironment?: {
+		environment: string;
+		publicApiUrl: string;
+	};
 }
 
 export interface CSRegisterRequest {
 	email: string;
 	username: string;
 	password: string;
-	fullName?: string;
-	companyName?: string;
 	wantLink?: boolean;
 	inviteCode?: string;
 	machineId?: string;
@@ -113,9 +139,26 @@ export interface CSRegisterResponse {
 	user?: CSUser; // No user means they are already registered. for security, that message is emailed to them rather than displayed in the client
 }
 
+export interface CSNRRegisterRequest {
+	apiKey: string;
+}
+
+export interface CSNRRegisterResponse {
+	email?: string;
+	token?: string;
+	accessToken?: string;
+	teamId?: string;
+	companies?: CSCompany[];
+	eligibleJoinCompanies?: CSEligibleJoinCompany[];
+	isWebmail?: boolean;
+	accountIsConnected?: boolean;
+}
+
 export interface CSConfirmRegistrationRequest {
 	email: string;
 	confirmationCode: string;
+	errorGroupGuid?: string;
+	nrAccountId?: number;
 }
 
 export interface CSGetInviteInfoRequest {
@@ -184,6 +227,7 @@ export interface CSCreatePostResponse {
 	streams?: CSStream[];
 	repos?: CSRepository[];
 	reviews?: CSReview[];
+	codeErrors?: CSCodeError[];
 }
 
 export interface CSCreateRepoRequest {
@@ -344,6 +388,8 @@ export interface CSGetMarkersResponse {
 	markerLocations: CSMarkerLocation[];
 	codemarks: CSCodemark[];
 	reviews: CSReview[];
+	codeErrors: CSCodeError[];
+	posts: CSPost[];
 }
 
 export interface CSGetPostResponse {
@@ -354,6 +400,7 @@ export interface CSGetPostsResponse {
 	posts: CSPost[];
 	codemarks?: CSCodemark[];
 	reviews?: CSReview[];
+	codeErrors?: CSCodeError[];
 	markers?: CSMarker[];
 	more?: boolean;
 }
@@ -576,15 +623,6 @@ export interface CSCreateReviewRequest {
 	// threadUrl?: string;
 }
 
-export interface CSCreateReviewResponse {
-	review: CSReview;
-	reviewChangesets: CSReviewChangeset[];
-	streams?: CSStream[];
-	repos?: CSRepository[];
-}
-
-export interface CSCreateChangeSetRequest {}
-
 export interface CSGetReviewRequest {
 	id: string;
 }
@@ -603,6 +641,58 @@ export interface CSGetReviewsRequest {
 
 export interface CSGetReviewsResponse {
 	reviews: CSReview[];
+	posts?: CSPost[];
+	markers?: CSMarker[];
+}
+
+export interface CSCreateCodeErrorResponse {
+	codeError: CSCodeError;
+	streams?: CSStream[];
+	repos?: CSRepository[];
+}
+
+export interface CSCreateCodeErrorRequest {
+	teamId: string;
+	stackTraces: CSStackTraceInfo[];
+	providerUrl?: string;
+	streamId?: string;
+	postId?: string;
+	parentPostId?: string;
+	status?: string;
+	assignees?: string[];
+	followerIds?: string[];
+	codeAuthorIds?: string[];
+
+	markers?: CSCreateMarkerRequest[];
+	remotes?: string[];
+}
+
+export interface CSCreateCodeErrorResponse {
+	codeError: CSCodeError;
+	streams?: CSStream[];
+	repos?: CSRepository[];
+}
+
+export interface CSCreateChangeSetRequest {}
+
+export interface CSGetCodeErrorRequest {
+	id: string;
+}
+
+export interface CSGetCodeErrorResponse {
+	codeError: CSCodeError;
+	post: CSPost;
+	markers?: CSMarker[];
+}
+
+export interface CSGetCodeErrorsRequest {
+	teamId: string;
+	streamId?: string;
+	ids?: string[];
+}
+
+export interface CSGetCodeErrorsResponse {
+	codeErrors: CSCodeError[];
 	posts?: CSPost[];
 	markers?: CSMarker[];
 }
@@ -660,10 +750,25 @@ export interface CSUpdateReviewResponse {
 	review: CSReview;
 }
 
+export interface CSUpdateCodeErrorRequest {
+	// edit the status, title or text
+	status?: CSCodeErrorStatus;
+	stackTraces?: CSStackTraceInfo[];
+}
+
+export interface CSUpdateCodeErrorResponse {
+	codeError: CSCodeError;
+}
+
 export interface CSDeleteReviewRequest {
 	id: string;
 }
 export interface CSDeleteReviewResponse {}
+
+export interface CSDeleteCodeErrorRequest {
+	id: string;
+}
+export interface CSDeleteCodeErrorResponse {}
 
 export interface CSUpdateMarkerRequest {
 	commitHashWhenCreated?: string;
@@ -806,3 +911,10 @@ export interface TriggerMsTeamsProactiveMessageRequest {
 }
 
 export interface TriggerMsTeamsProactiveMessageResponse {}
+
+export interface CSThirdPartyProviderSetInfoRequestData {
+	teamId: string;
+	host?: string;
+	data: { [key: string]: any };
+	pendingVerification?: boolean;
+}

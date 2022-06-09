@@ -25,8 +25,12 @@ namespace CodeStream.VisualStudio.UI.Settings {
         private string _serverUrl = "https://api.codestream.com";
 #endif
 		private bool _disableStrictSsl = false;
-		
 		private bool _proxyStrictSsl;
+		private string _extraCertificates;
+
+		private string _goldenSignalsInEditorFormat =
+			"avg duration: ${averageDuration} | throughput: ${throughput} | error rate: ${errorsPerMinute} - since ${since}";
+
 		private ProxySupport _proxySupport;
 
 		public event PropertyChangedEventHandler PropertyChanged;
@@ -76,19 +80,6 @@ namespace CodeStream.VisualStudio.UI.Settings {
 			set {
 				if (_email != value) {
 					_email = value;
-					NotifyPropertyChanged();
-				}
-			}
-		}
-
-		[Category("Authentication")]
-		[DisplayName("Team")]
-		[Description("Specifies an optional team to connect to the CodeStream service")]
-		public string Team {
-			get => _team;
-			set {
-				if (_team != value) {
-					_team = value;
 					NotifyPropertyChanged();
 				}
 			}
@@ -163,6 +154,20 @@ namespace CodeStream.VisualStudio.UI.Settings {
 			}
 		}
 
+		[Category("Connectivity")]
+		[DisplayName("Extra Certificates")]
+		[Description("Specify path to file containing any certificate(s) you wish CodeStream connections to trust")]
+		public string ExtraCertificates {
+			get => _extraCertificates;
+			set {
+				if (_extraCertificates != value) {
+					_extraCertificates = value;
+
+					NotifyPropertyChanged();
+				}
+			}
+		}
+
 		[Category("UI")]
 		[DisplayName()]
 		[Description("Specifies whether to automatically hide editor marker glyphs when the CodeStream panel is showing codemarks in the current file")]
@@ -223,6 +228,19 @@ namespace CodeStream.VisualStudio.UI.Settings {
 			set {
 				if (_traceLevel != value) {
 					_traceLevel = value;
+					NotifyPropertyChanged();
+				}
+			}
+		}
+
+		[Category("UI")]
+		[DisplayName("Golden Signals Format")]
+		[Description("Specifies how to format the CodeStream golden signals in the editor")]
+		public string GoldenSignalsInEditorFormat {
+			get => _goldenSignalsInEditorFormat;
+			set {
+				if (_goldenSignalsInEditorFormat != value) {
+					_goldenSignalsInEditorFormat = value;
 					NotifyPropertyChanged();
 				}
 			}

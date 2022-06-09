@@ -1,26 +1,26 @@
-import React from "react";
-import Icon from "../Icon";
-import Menu from "../Menu";
-import AsyncSelect from "react-select/async";
 import {
 	CodeDelimiterStyles,
-	ThirdPartyProviderConfig,
+	FetchAssignableUsersAutocompleteRequestType,
 	FetchThirdPartyBoardsRequestType,
 	JiraBoard,
-	FetchAssignableUsersRequestType
+	ThirdPartyProviderConfig
 } from "@codestream/protocols/agent";
-import { useDispatch, useSelector } from "react-redux";
-import { setIssueProvider } from "@codestream/webview/store/context/actions";
 import { CodeStreamState } from "@codestream/webview/store";
+import { updateForProvider } from "@codestream/webview/store/activeIntegrations/actions";
 import { getIntegrationData } from "@codestream/webview/store/activeIntegrations/reducer";
 import { JiraIntegrationData } from "@codestream/webview/store/activeIntegrations/types";
-import { updateForProvider } from "@codestream/webview/store/activeIntegrations/actions";
+import { setIssueProvider } from "@codestream/webview/store/context/actions";
+import { disconnectProvider } from "@codestream/webview/store/providers/actions";
 import { useDidMount } from "@codestream/webview/utilities/hooks";
+import { emptyArray } from "@codestream/webview/utils";
+import React from "react";
+import ReactDOM from "react-dom";
+import { useDispatch, useSelector } from "react-redux";
+import AsyncSelect from "react-select/async";
 import { HostApi } from "../..";
 import { CrossPostIssueContext } from "../CodemarkForm";
-import { emptyArray, mapFilter } from "@codestream/webview/utils";
-import ReactDOM from "react-dom";
-import { disconnectProvider } from "../actions";
+import Icon from "../Icon";
+import Menu from "../Menu";
 
 export function JiraCardControls(
 	props: React.PropsWithChildren<{ provider: ThirdPartyProviderConfig }>
@@ -140,29 +140,25 @@ export function JiraCardControls(
 		}
 	}, []);
 
-	const loadAssignableUsers = React.useCallback(
-		async (inputValue: string) => {
-			if (!data.currentProject) return [];
+	const loadAssignableUsers = async (inputValue: string) => {
+		if (!data.currentProject) return [];
 
-			try {
-				const { users } = await HostApi.instance.send(FetchAssignableUsersRequestType, {
-					providerId: props.provider.id,
-					boardId: data.currentProject.id
-				});
-				return mapFilter(users, user => {
-					if (user.displayName.toLowerCase().includes(inputValue.toLowerCase()))
-						return { label: user.displayName, value: user };
-					return;
-				});
-			} catch (error) {
-				// in case auth tokens have expired
-				// TODO: needs to be communicated to the user
-				dispatch(disconnectProvider(props.provider.id, "Compose Modal"));
-				return [];
-			}
-		},
-		[data.currentProject]
-	);
+		try {
+			const { users } = await HostApi.instance.send(FetchAssignableUsersAutocompleteRequestType, {
+				search: inputValue,
+				providerId: props.provider.id,
+				boardId: data.currentProject.id
+			});
+			return users.map(user => {
+				return { label: user.displayName, value: user };
+			});
+		} catch (error) {
+			// TODO: Don't disconnect on any error - only in case auth tokens have expired
+			// TODO: needs to be communicated to the user
+			dispatch(disconnectProvider(props.provider.id, "Compose Modal"));
+			return [];
+		}
+	};
 
 	const assigneesInput = (() => {
 		if (crossPostIssueContext.assigneesInputTarget == undefined) return null;

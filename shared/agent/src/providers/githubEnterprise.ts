@@ -6,8 +6,11 @@ import { URI } from "vscode-uri";
 import { Container } from "../container";
 import { Logger } from "../logger";
 import { DidChangePullRequestCommentsNotificationType } from "../protocol/agent.protocol";
-import { ProviderConfigurationData } from "../protocol/agent.protocol.providers";
-import { log, lspProvider } from "../system";
+import {
+	ProviderConfigurationData,
+	ThirdPartyDisconnect
+} from "../protocol/agent.protocol.providers";
+import { lspProvider } from "../system";
 import { GitHubProvider } from "./github";
 import { ProviderGetRepoInfoResponse, ProviderPullRequestInfo, ProviderVersion } from "./provider";
 
@@ -57,7 +60,10 @@ export class GitHubEnterpriseProvider extends GitHubProvider {
 	protected async getVersion(): Promise<ProviderVersion> {
 		try {
 			if (this._version == null) {
-				const response = await this.get<{ installed_version: string }>("/meta");
+				// this GET call should be very fast, so 5s here should be plenty
+				const response = await this.get<{ installed_version: string }>("/meta", undefined, {
+					timeout: 5000
+				});
 				const installedVersion = response.body.installed_version;
 				this._version = {
 					version: installedVersion,
@@ -74,8 +80,8 @@ export class GitHubEnterpriseProvider extends GitHubProvider {
 				});
 			}
 		} catch (ex) {
-			Logger.error(ex);
-			this._version = this.DEFAULT_VERSION;
+			Logger.warn(ex.message || ex.toString());
+			return this.DEFAULT_VERSION;
 		}
 		return this._version;
 	}
@@ -120,53 +126,10 @@ export class GitHubEnterpriseProvider extends GitHubProvider {
 		return this._isPRCreationApiCompatible;
 	}
 
-	async getRepoInfo(request: { remote: string }): Promise<ProviderGetRepoInfoResponse> {
-		try {
-			const { owner, name } = this.getOwnerFromRemote(request.remote);
-			const repoResponse = await this.get<GitHubEnterpriseRepo>(`/repos/${owner}/${name}`);
-			const pullRequestResponse = await this.get<GitHubEnterprisePullRequest[]>(
-				`/repos/${owner}/${name}/pulls?state=open`
-			);
-			const pullRequests: ProviderPullRequestInfo[] = [];
-			if (pullRequestResponse) {
-				pullRequestResponse.body.map(_ => {
-					return {
-						id: _.id,
-						url: _.html_url,
-						baseRefName: _.base.ref,
-						headRefName: _.head.ref
-					};
-				});
-			}
-			return {
-				id: repoResponse.body.node_id,
-				defaultBranch: repoResponse.body.default_branch,
-				pullRequests: pullRequests
-			};
-		} catch (ex) {
-			Logger.error(ex, `${this.displayName}: getRepoInfo`, {
-				remote: request.remote
-			});
-			return {
-				error: {
-					type: "PROVIDER",
-					message: `${this.displayName}: ${ex.message}`
-				}
-			};
-		}
-	}
-
-	@log()
-	async configure(request: ProviderConfigurationData) {
-		await this.session.api.setThirdPartyProviderToken({
-			providerId: this.providerConfig.id,
-			host: request.host,
-			token: request.token,
-			data: {
-				baseUrl: request.baseUrl
-			}
-		});
-		this.session.updateProviders();
+	async onDisconnected(request?: ThirdPartyDisconnect) {
+		delete this._atMe;
+		delete this._isPRApiCompatible;
+		return super.onDisconnected(request);
 	}
 
 	private _atMe: string | undefined;
@@ -177,8 +140,10 @@ export class GitHubEnterpriseProvider extends GitHubProvider {
 	 * @return {*}  {Promise<string>}
 	 * @memberof GitHubEnterpriseProvider
 	 */
-	protected async getMe(): Promise<string> {
-		if (this._atMe) return this._atMe;
+	protected async getMe(throwOnError?: boolean): Promise<string> {
+		if (this._atMe) {
+			return this._atMe;
+		}
 
 		try {
 			const query = await this.query<any>(`
@@ -187,11 +152,14 @@ export class GitHubEnterpriseProvider extends GitHubProvider {
 					login
 				}
 			}`);
-
 			this._atMe = query.viewer.login;
 			return this._atMe!;
 		} catch (ex) {
-			Logger.error(ex);
+			if (throwOnError) {
+				throw ex;
+			} else {
+				Logger.error(ex);
+			}
 		}
 		this._atMe = await super.getMe();
 		return this._atMe;
@@ -203,6 +171,10 @@ export class GitHubEnterpriseProvider extends GitHubProvider {
 			await this.getVersion();
 		}
 		return super.client();
+	}
+
+	async verifyConnection(config: ProviderConfigurationData): Promise<void> {
+		await this.getMe(true);
 	}
 
 	async query<T = any>(query: string, variables: any = undefined) {

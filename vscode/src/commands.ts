@@ -3,6 +3,10 @@ import { CodemarkType, CSMarkerIdentifier, CSReviewCheckpoint } from "@codestrea
 import { Editor } from "extensions/editor";
 import { commands, Disposable, env, Range, Uri, ViewColumn, window, workspace } from "vscode";
 import { openUrl } from "urlHandler";
+import {
+	FileLevelTelemetryRequestOptions,
+	MetricTimesliceNameMapping
+} from "protocols/agent/agent.protocol.providers";
 import { SessionSignedOutReason, StreamThread } from "./api/session";
 import { TokenManager } from "./api/tokenManager";
 import { WorkspaceState } from "./common";
@@ -87,6 +91,35 @@ export interface OpenReviewCommandArgs {
 
 export interface OpenStreamCommandArgs {
 	streamThread: StreamThread;
+}
+
+export interface ViewMethodLevelTelemetryBaseCommandArgs {
+	repo?: {
+		id: string;
+		name: string;
+		remote: string;
+	};
+	newRelicAccountId?: number;
+	newRelicEntityGuid?: string;
+	error?: {
+		message?: string;
+		type?: string;
+	};
+	languageId: string;
+}
+
+export interface ViewMethodLevelTelemetryErrorCommandArgs
+	extends ViewMethodLevelTelemetryBaseCommandArgs {}
+
+export interface ViewMethodLevelTelemetryCommandArgs
+	extends ViewMethodLevelTelemetryBaseCommandArgs {
+	codeNamespace: string;
+	filePath: string;
+	relativeFilePath: string;
+	range: Range;
+	functionName: string;
+	methodLevelTelemetryRequestOptions?: FileLevelTelemetryRequestOptions;
+	metricTimesliceNameMapping?: MetricTimesliceNameMapping;
 }
 
 export class Commands implements Disposable {
@@ -528,12 +561,16 @@ export class Commands implements Disposable {
 	}
 
 	@command("signOut")
-	async signOut(reason = SessionSignedOutReason.UserSignedOutFromExtension) {
+	async signOut(
+		reason = SessionSignedOutReason.UserSignedOutFromExtension,
+		newServerUrl?: string,
+		newEnvironment?: string
+	) {
 		try {
 			if (reason === SessionSignedOutReason.UserSignedOutFromExtension) {
 				Container.webview.hide();
 			}
-			await Container.session.logout(reason);
+			await Container.session.logout(reason, newServerUrl, newEnvironment);
 		} catch (ex) {
 			Logger.error(ex);
 		}
@@ -585,6 +622,29 @@ export class Commands implements Disposable {
 		} catch (ex) {
 			Logger.error(ex);
 		}
+	}
+
+	@command("viewMethodLevelTelemetry", {
+		showErrorMessage: "Unable to view code-level metrics"
+	})
+	async viewMethodLevelTelemetry(args: string) {
+		let parsedArgs;
+		try {
+			parsedArgs = JSON.parse(args) as ViewMethodLevelTelemetryCommandArgs;
+			if (parsedArgs.error?.type === "NO_RUBY_VSCODE_EXTENSION") {
+				Container.agent.telemetry.track("MLT Language Extension Prompt", {
+					Language: parsedArgs.languageId
+				});
+			}
+			await Container.webview.viewMethodLevelTelemetry(parsedArgs);
+		} catch (ex) {
+			Logger.error(ex);
+		}
+	}
+
+	async updateEditorCodeLens(): Promise<boolean> {
+		Container.instrumentableCodeLensController.refresh();
+		return true;
 	}
 
 	private async startWorkRequest() {

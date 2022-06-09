@@ -9,6 +9,7 @@ import { Button } from "../src/components/Button";
 import {
 	CodemarkPlus,
 	CreateThirdPartyPostRequestType,
+	NewRelicErrorGroup,
 	ReviewPlus,
 	UpdatePostSharingDataRequestType
 } from "@codestream/protocols/agent";
@@ -23,7 +24,7 @@ import { logError } from "../logger";
 import { useMarkdownifyToHtml } from "./Markdowner";
 import { getConnectedProviders } from "../store/providers/reducer";
 import { capitalize } from "../utils";
-import { CSPost } from "@codestream/protocols/api";
+import { CSCodeError, CSPost } from "@codestream/protocols/api";
 import { Dialog } from "../src/components/Dialog";
 
 const StyledCard = styled(Card)``;
@@ -96,16 +97,26 @@ interface SharingModalProps extends ModalProps {
 	codemark?: CodemarkPlus;
 	post?: CSPost;
 	review?: ReviewPlus;
+	codeError?: CSCodeError;
+	errorGroup?: NewRelicErrorGroup;
 }
 
 export function SharingModal(props: SharingModalProps) {
 	const shareTarget: {
 		creatorId: string;
-		text: string;
+		text?: string;
 		title: string;
 		createdAt: number;
-	} = props.codemark || props.review || { creatorId: "", text: "", title: "", createdAt: 0 };
-	const shareTargetType = props.codemark ? "Codemark" : props.review ? "Review" : "";
+	} = props.codemark ||
+		props.review ||
+		props.codeError || { creatorId: "", text: "", title: "", createdAt: 0 };
+	const shareTargetType = props.codemark
+		? "Codemark"
+		: props.review
+		? "Review"
+		: props.codeError
+		? "Error"
+		: "";
 
 	const { author, mentionedUserIds } = useSelector((state: CodeStreamState) => ({
 		author: state.users[shareTarget.creatorId],
@@ -147,9 +158,10 @@ export function SharingModal(props: SharingModalProps) {
 				providerId: valuesRef.current!.providerId,
 				channelId: valuesRef.current!.channelId,
 				providerTeamId: valuesRef.current!.providerTeamId,
-				text: shareTarget.text,
+				text: props.codeError ? shareTarget.title : shareTarget.text!,
 				codemark: props.codemark,
 				review: props.review,
+				codeError: props.codeError,
 				mentionedUserIds
 			});
 			if (props.post && ts) {
@@ -172,10 +184,20 @@ export function SharingModal(props: SharingModalProps) {
 					sharedTo
 				});
 			}
-			HostApi.instance.track(`Shared ${shareTargetType}`, {
+
+			const trackingData = {
 				Destination: getProviderName(valuesRef.current!.providerId),
 				[`${shareTargetType} Status`]: "Existing"
-			});
+			};
+			if (
+				props.codeError &&
+				props.codeError.objectId &&
+				props.codeError.objectType === "errorGroup"
+			) {
+				trackingData["Error Group ID"] = props.codeError.objectId!;
+			}
+			HostApi.instance.track(`Shared ${shareTargetType}`, trackingData);
+
 			setState({ name: "success" });
 		} catch (error) {
 			setState({ name: "failure", message: error.message });
@@ -215,7 +237,7 @@ export function SharingModal(props: SharingModalProps) {
 						<CardTitle>
 							<LinkifiedText
 								dangerouslySetInnerHTML={{
-									__html: markdownifyToHtml(shareTarget.title || shareTarget.text)
+									__html: markdownifyToHtml(shareTarget.title || shareTarget.text || "")
 								}}
 							/>
 						</CardTitle>

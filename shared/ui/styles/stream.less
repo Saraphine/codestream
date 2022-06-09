@@ -234,6 +234,50 @@
 		//no-animation: 0.2s slidein;
 	}
 
+	.confirm-popup {
+		width: 100%;
+		height: 100%;
+		padding: 0 20px;
+		.centered {
+			text-align: center;
+		}
+		.confirm-popup-body {
+			margin: 20px auto;
+			padding: 20px;
+			white-space: pre-wrap;
+			max-width: 340px;
+			background: @base-background-color;
+			border: 1px solid @base-border-color;
+			box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
+			.vscode-dark& {
+				box-shadow: 0 5px 10px rgba(0, 0, 0, 0.5);
+			}
+			&.wide {
+				max-width: 500px;
+			}
+			.confirm-title {
+				font-size: 24px;
+				text-align: center;
+				padding-bottom: 20px;
+			}
+			.confirm-message {
+				font-size: 16px;
+				padding-bottom: 10px;
+			}
+			.button-group {
+				// padding: 0px 10px 10px 56px;
+				margin-bottom: 5px;
+				button {
+					// this crazy escape syntax is required due to a bug in LESS
+					width: calc(~"50% - 5px");
+				}
+				button:first-child {
+					margin-right: 10px;
+				}
+			}
+		}
+	}
+
 	.stream {
 		width: 100%;
 		height: 100%;
@@ -1216,49 +1260,6 @@
 			}
 		}
 
-		.confirm-popup {
-			width: 100%;
-			height: 100%;
-			padding: 0 20px;
-			.centered {
-				text-align: center;
-			}
-			.confirm-popup-body {
-				margin: 20px auto;
-				padding: 20px;
-				white-space: pre-wrap;
-				max-width: 340px;
-				background: @base-background-color;
-				border: 1px solid @base-border-color;
-				box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
-				.vscode-dark& {
-					box-shadow: 0 5px 10px rgba(0, 0, 0, 0.5);
-				}
-				&.wide {
-					max-width: 500px;
-				}
-				.confirm-title {
-					font-size: 24px;
-					text-align: center;
-					padding-bottom: 20px;
-				}
-				.confirm-message {
-					font-size: 16px;
-					padding-bottom: 10px;
-				}
-				.button-group {
-					// padding: 0px 10px 10px 56px;
-					margin-bottom: 5px;
-					button {
-						// this crazy escape syntax is required due to a bug in LESS
-						width: calc(~"50% - 5px");
-					}
-					button:first-child {
-						margin-right: 10px;
-					}
-				}
-			}
-		}
 		.menu-popup {
 			// height: 500px;
 			position: fixed;
@@ -2568,11 +2569,17 @@
 	.invite-panel .standard-form,
 	.team-panel .standard-form,
 	.configure-provider-panel .standard-form,
-	.create-channel-panel .standard-form {
+	.create-channel-panel .standard-form,
+	.embedded-panel .standard-form {
 		max-width: 100%;
 		.button-group button {
 			flex-basis: 50%;
 		}
+	}
+	.invite-panel .standard-form,
+	.team-panel .standard-form,
+	.configure-provider-panel .standard-form,
+	.create-channel-panel .standard-form {
 		.input-text {
 			background: @base-background-color;
 			border: 1px solid @base-background-color;
@@ -2582,6 +2589,7 @@
 			}
 		}
 	}
+
 	.configure-provider-panel .standard-form textarea.input-text {
 		height: 50px;
 	}
@@ -3338,4 +3346,14 @@ li,
 }
 .active-drag .drop-target {
 	display: flex;
+}
+:focus > &.li-active {
+	color: var(--list-active-foreground) !important;
+	background: var(--list-active-background) !important;
+	outline: 1px solid var(--list-active-outline) !important;
+	z-index: 5;
+}
+&.li-active {
+	color: var(--list-inactive-foreground) !important;
+	background: var(--list-inactive-background) !important;
 }

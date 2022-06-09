@@ -1,6 +1,7 @@
 package com.codestream.editor
 
 import com.codestream.editorService
+import com.codestream.extensions.gitSha
 import com.codestream.extensions.selections
 import com.codestream.extensions.uri
 import com.codestream.extensions.visibleRanges
@@ -31,6 +32,7 @@ class VisibleAreaListenerImpl(val project: Project) : VisibleAreaListener {
         project.webViewService?.postNotification(
             EditorNotifications.DidChangeVisibleRanges(
                 e.editor.document.uri,
+                e.editor.document.gitSha,
                 e.editor.selections,
                 visibleRanges,
                 e.editor.document.lineCount

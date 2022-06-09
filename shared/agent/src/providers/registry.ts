@@ -1,7 +1,6 @@
 "use strict";
 import { differenceWith } from "lodash-es";
 import semver from "semver";
-import { CSMe } from "protocol/api.protocol";
 import { URI } from "vscode-uri";
 import { SessionContainer } from "../container";
 import { Logger } from "../logger";
@@ -28,8 +27,12 @@ import {
 	DisconnectThirdPartyProviderResponse,
 	ExecuteThirdPartyRequest,
 	ExecuteThirdPartyRequestUntypedType,
+	FetchAssignableUsersAutocompleteRequest,
+	FetchAssignableUsersAutocompleteRequestType,
 	FetchAssignableUsersRequest,
 	FetchAssignableUsersRequestType,
+	FetchProviderDefaultPullRequest,
+	FetchProviderDefaultPullRequestsType,
 	FetchThirdPartyBoardsRequest,
 	FetchThirdPartyBoardsRequestType,
 	FetchThirdPartyBoardsResponse,
@@ -42,8 +45,6 @@ import {
 	FetchThirdPartyChannelsRequest,
 	FetchThirdPartyChannelsRequestType,
 	FetchThirdPartyChannelsResponse,
-	FetchProviderDefaultPullRequest,
-	FetchProviderDefaultPullRequestsType,
 	FetchThirdPartyPullRequestCommitsRequest,
 	FetchThirdPartyPullRequestCommitsType,
 	FetchThirdPartyPullRequestRequest,
@@ -61,8 +62,13 @@ import {
 	UpdateThirdPartyStatusRequestType,
 	UpdateThirdPartyStatusResponse
 } from "../protocol/agent.protocol";
+import {
+	CSMe,
+	CSMePreferences,
+	CSNotificationDeliveryPreference
+} from "../protocol/api.protocol.models";
 import { CodeStreamSession } from "../session";
-import { getProvider, getRegisteredProviders, log, lsp, lspHandler } from "../system";
+import { Functions, getProvider, getRegisteredProviders, log, lsp, lspHandler } from "../system";
 import { GitLabEnterpriseProvider } from "./gitlabEnterprise";
 import {
 	ProviderCreatePullRequestRequest,
@@ -71,7 +77,8 @@ import {
 	ThirdPartyIssueProvider,
 	ThirdPartyPostProvider,
 	ThirdPartyProvider,
-	ThirdPartyProviderSupportsPullRequests
+	ThirdPartyProviderSupportsPullRequests,
+	ThirdPartyProviderSupportsViewingPullRequests
 } from "./provider";
 
 // NOTE: You must include all new providers here, otherwise the webpack build will exclude them
@@ -90,8 +97,9 @@ export * from "./azuredevops";
 export * from "./slack";
 export * from "./msteams";
 export * from "./okta";
-export * from "./clubhouse";
+export * from "./shortcut";
 export * from "./linear";
+export * from "./newrelic";
 
 const PR_QUERIES: {
 	[Identifier: string]: {
@@ -151,18 +159,24 @@ export class ThirdPartyProviderRegistry {
 	private _lastProvidersPRs: ProviderPullRequests[] | undefined;
 	private _queriedPRsAgeLimit?: { providerName: string; ageLimit: number[] }[] | undefined;
 	private _pollingInterval: NodeJS.Timer | undefined;
+	private session: CodeStreamSession | undefined = undefined;
 
-	constructor(public readonly session: CodeStreamSession) {
-		this._pollingInterval = setInterval(this.pullRequestsStateHandler.bind(this), 120000); // every 2 minutes
+	initialize(session: CodeStreamSession) {
+		this.session = session;
+		this._pollingInterval = Functions.repeatInterval(
+			this.pullRequestsStateHandler.bind(this),
+			2000,
+			900000
+		); // every 15 minutes
+		return this;
 	}
 
 	private async pullRequestsStateHandler() {
-		// TODO FIXME -- should read from something in the usersManager
-		const user = await SessionContainer.instance().session.api.meUser;
+		const user = await SessionContainer.instance().users.getMe();
 		if (!user) return;
 
 		const providers = this.getConnectedProviders(user, (p): p is ThirdPartyIssueProvider &
-			ThirdPartyProviderSupportsPullRequests => {
+			ThirdPartyProviderSupportsViewingPullRequests => {
 			const thirdPartyIssueProvider = p as ThirdPartyIssueProvider;
 			const name = thirdPartyIssueProvider.getConfig().name;
 			return (
@@ -202,10 +216,26 @@ export class ThirdPartyProviderRegistry {
 		if (succeededCount > 0) {
 			const newProvidersPRs = this.getProvidersPRsDiff(providersPullRequests);
 			this._lastProvidersPRs = providersPullRequests;
-
-			this.fireNewPRsNotifications(newProvidersPRs);
+			if (user.preferences && this.shouldToastNotify(user.preferences)) {
+				this.fireNewPRsNotifications(newProvidersPRs);
+			}
 		}
 	}
+
+	private shouldToastNotify = (prefs: CSMePreferences): boolean => {
+		const notificationDelivery = prefs.notificationDelivery || CSNotificationDeliveryPreference.All;
+		const toastPrNotify = prefs.toastPrNotify === false ? false : true;
+		const result =
+			(notificationDelivery === CSNotificationDeliveryPreference.ToastOnly ||
+				notificationDelivery === CSNotificationDeliveryPreference.All) &&
+			toastPrNotify;
+		if (!result) {
+			Logger.log(
+				`Skipping PR toast notify due to user settings notificationDelivery: ${notificationDelivery}, toastPrNotify: ${toastPrNotify}`
+			);
+		}
+		return result;
+	};
 
 	private getProvidersPRsDiff = (providersPRs: ProviderPullRequests[]): ProviderPullRequests[] => {
 		const newProvidersPRs: ProviderPullRequests[] = [];
@@ -282,6 +312,8 @@ export class ThirdPartyProviderRegistry {
 				type: ChangeDataType.PullRequests,
 				data: prNotificationMessages
 			});
+		} else {
+			Logger.log("Will not notify of new PRs - no changes detected");
 		}
 	}
 
@@ -308,7 +340,7 @@ export class ThirdPartyProviderRegistry {
 			throw new Error(`No registered provider for '${request.providerId}'`);
 		}
 
-		await provider.configure(request.data);
+		await provider.configure(request.data, request.verify);
 		return {};
 	}
 
@@ -366,6 +398,25 @@ export class ThirdPartyProviderRegistry {
 	}
 
 	@log()
+	@lspHandler(FetchAssignableUsersAutocompleteRequestType)
+	fetchAssignableUsersAutocomplete(request: FetchAssignableUsersAutocompleteRequest) {
+		const provider = getProvider(request.providerId);
+		if (provider === undefined) {
+			throw new Error(`No registered provider for '${request.providerId}'`);
+		}
+		const issueProvider = provider as ThirdPartyIssueProvider;
+		if (
+			issueProvider == null ||
+			typeof issueProvider.supportsIssues !== "function" ||
+			!issueProvider.supportsIssues()
+		) {
+			throw new Error(`Provider(${provider.name}) doesn't support issues`);
+		}
+
+		return issueProvider.getAssignableUsersAutocomplete(request);
+	}
+
+	@log()
 	@lspHandler(FetchThirdPartyBoardsRequestType)
 	fetchBoards(request: FetchThirdPartyBoardsRequest): Promise<FetchThirdPartyBoardsResponse> {
 		const provider = getProvider(request.providerId);
@@ -400,8 +451,11 @@ export class ThirdPartyProviderRegistry {
 			throw new Error(`Provider(${provider.name}) doesn't support issues`);
 		}
 
-		if (issueProvider.getCards) return issueProvider.getCards(request);
-		else return Promise.resolve({ cards: [] });
+		if (issueProvider.getCards) {
+			return issueProvider.getCards(request);
+		} else {
+			return Promise.resolve({ cards: [] });
+		}
 	}
 
 	@log()
@@ -422,8 +476,11 @@ export class ThirdPartyProviderRegistry {
 			throw new Error(`Provider(${provider.name}) doesn't support issues`);
 		}
 
-		if (issueProvider.getCardWorkflow) return issueProvider.getCardWorkflow(request);
-		else return Promise.resolve({ workflow: [] });
+		if (issueProvider.getCardWorkflow) {
+			return issueProvider.getCardWorkflow(request);
+		} else {
+			return Promise.resolve({ workflow: [] });
+		}
 	}
 
 	@log()
@@ -540,17 +597,17 @@ export class ThirdPartyProviderRegistry {
 		const pullRequestProvider = provider as ThirdPartyIssueProvider;
 		if (
 			pullRequestProvider == null ||
-			typeof pullRequestProvider.supportsPullRequests !== "function" ||
-			!pullRequestProvider.supportsPullRequests()
+			typeof pullRequestProvider.supportsCreatingPullRequests !== "function" ||
+			!pullRequestProvider.supportsCreatingPullRequests()
 		) {
 			throw new Error(`Provider(${provider.name}) doesn't support pull requests`);
 		}
-
 		const response = await pullRequestProvider.createPullRequest(request);
 		return response;
 	}
 
 	async getRepoInfo(request: ProviderGetRepoInfoRequest) {
+		// this is used in the create pr flow hence the check for create
 		const provider = getProvider(request.providerId);
 		if (provider === undefined) {
 			throw new Error(`No registered provider for '${request.providerId}'`);
@@ -559,13 +616,11 @@ export class ThirdPartyProviderRegistry {
 		const pullRequestProvider = provider as ThirdPartyIssueProvider;
 		if (
 			pullRequestProvider == null ||
-			typeof pullRequestProvider.supportsPullRequests !== "function" ||
-			!pullRequestProvider.supportsPullRequests()
+			typeof pullRequestProvider.supportsCreatingPullRequests !== "function" ||
+			!pullRequestProvider.supportsCreatingPullRequests()
 		) {
 			throw new Error(`Provider(${provider.name}) doesn't support pull requests`);
 		}
-
-		// TODO clean it up remote here
 
 		const response = await pullRequestProvider.getRepoInfo(request);
 		return response;
@@ -642,9 +697,13 @@ export class ThirdPartyProviderRegistry {
 			const uri = URI.parse(request.url);
 			const providers = getRegisteredProviders();
 			for (const provider of providers.filter(_ => {
-				const provider = _ as ThirdPartyIssueProvider & ThirdPartyProviderSupportsPullRequests;
+				const provider = _ as ThirdPartyIssueProvider &
+					ThirdPartyProviderSupportsViewingPullRequests;
 				try {
-					return provider.supportsPullRequests != undefined && provider.supportsPullRequests();
+					return (
+						provider.supportsViewingPullRequests != undefined &&
+						provider.supportsViewingPullRequests()
+					);
 				} catch {
 					return false;
 				}
@@ -797,7 +856,7 @@ export class ThirdPartyProviderRegistry {
 			]
 		};
 		try {
-			const user = await SessionContainer.instance().session.api.meUser;
+			const user = await SessionContainer.instance().users.getMe();
 			const providers = await this.getConnectedPullRequestProviders(user!);
 			const gitlabEnterprise = providers?.find(_ => _.getConfig().id === "gitlab/enterprise");
 			if (gitlabEnterprise) {
@@ -822,12 +881,12 @@ export class ThirdPartyProviderRegistry {
 
 	private getPullRequestProvider(
 		provider: ThirdPartyProvider
-	): ThirdPartyIssueProvider & ThirdPartyProviderSupportsPullRequests {
+	): ThirdPartyIssueProvider & ThirdPartyProviderSupportsViewingPullRequests {
 		const pullRequestProvider = provider as ThirdPartyIssueProvider;
 		if (
 			pullRequestProvider == null ||
-			typeof pullRequestProvider.supportsPullRequests !== "function" ||
-			!pullRequestProvider.supportsPullRequests()
+			typeof pullRequestProvider.supportsViewingPullRequests !== "function" ||
+			!pullRequestProvider.supportsViewingPullRequests()
 		) {
 			throw new Error(`Provider(${provider.name}) doesn't support pull requests`);
 		}

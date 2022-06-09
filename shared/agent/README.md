@@ -8,9 +8,9 @@ git clone https://github.com/TeamCodeStream/codestream.git
 
 Prerequisites
 
-- [Git](https://git-scm.com/)
-- [NodeJS](https://nodejs.org/en/), `>= 8.9.1, < 9.0.0`
-- [npm](https://npmjs.com/), `>= 6.2.0`
+- [Git](https://git-scm.com/), 2.32.0
+- [NodeJS](https://nodejs.org/en/), 16.13.2
+- [npm](https://npmjs.com/), 8.1.2
 
 ### Build
 

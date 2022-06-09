@@ -27,4 +27,13 @@ class JBCefNotAvailable : WebView {
 
     override fun openDevTools() {
     }
+
+    override fun zoomIn() {
+    }
+
+    override fun zoomOut() {
+    }
+
+    override fun resetZoom() {
+    }
 }

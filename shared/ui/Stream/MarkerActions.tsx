@@ -345,7 +345,9 @@ class MarkerActions extends React.Component<Props, State> {
 				return (
 					<span>
 						{message}{" "}
-						<a href="https://docs.codestream.com/userguide/faq/git-issues/">{learnMore}</a>
+						<a href="https://docs.newrelic.com/docs/codestream/troubleshooting/git-issues/">
+							{learnMore}
+						</a>
 					</span>
 				);
 			}
@@ -518,7 +520,7 @@ class MarkerActions extends React.Component<Props, State> {
 		}
 
 		if (this.state.textDocumentUri === this.props.textEditorUri) {
-			this.getDocumentFromMarkerDebounced(this.props.marker.id, "_toggleCodeHighlight").then(
+			this.getDocumentFromMarkerDebounced(this.props.marker.id, "_toggleCodeHighlight")!.then(
 				info => {
 					if (info) {
 						HostApi.instance.send(EditorHighlightRangeRequestType, {

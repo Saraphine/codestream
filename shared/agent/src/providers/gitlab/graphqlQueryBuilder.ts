@@ -1,6 +1,4 @@
 "use strict";
-import semver from "semver";
-import { gate } from "../../system/decorators/gate";
 import {
 	DocumentNode,
 	FieldNode,
@@ -10,8 +8,10 @@ import {
 	SelectionNode,
 	SelectionSetNode
 } from "graphql";
+import semver from "semver";
 import { Logger } from "../../logger";
 import { ProviderVersion } from "../../providers/provider";
+import { gate } from "../../system/decorators/gate";
 
 interface Leaf {
 	value: {
@@ -67,13 +67,15 @@ export class GraphqlQueryBuilder {
 		"0.0.0": {}
 	};
 
+	public static lowestSupportedVersion = "13.6.4";
+
 	getOrCreateSupportMatrix(providerVersion: ProviderVersion): any {
 		const version = providerVersion.version;
-		if (!version || version === "0.0.0")
+		if (!version || version === "0.0.0") {
 			return {
 				version: providerVersion
 			};
-
+		}
 		const versionedQuery = this.supportMatrix[version];
 		if (versionedQuery) {
 			Logger.debug(
@@ -92,7 +94,9 @@ export class GraphqlQueryBuilder {
 			// approvalsRequired: isGte1380,
 			approvals: isGte1364,
 			approvedBy: isGte1364,
-			currentUserTodos: isGte1364
+			currentUserTodos: isGte1364,
+			// whether we supports draft mode (or old workInProgress)
+			draft: semver.gte(version, "14.5.0")
 		};
 		this.supportMatrix[version] = supports;
 
@@ -148,8 +152,28 @@ export class GraphqlQueryBuilder {
 				}
 			}
 		],
-		// for the GetPullRequest query, if the current version is << 13.8.0 run this...
 		GetPullRequest: [
+			{
+				selector: (currentVersion: string) => semver.lt(currentVersion, "14.5.0"),
+				query: {
+					head: {
+						value: {
+							key: "GetPullRequest"
+						},
+						next: {
+							value: {
+								key: "project"
+							},
+							next: {
+								value: {
+									key: "mergeRequest",
+									removals: ["draft"]
+								}
+							}
+						}
+					}
+				}
+			},
 			{
 				// this was supposed to be in 13.7, but a user with 13.7.9 ran into not having it
 				// https://about.gitlab.com/releases/2020/12/22/gitlab-13-7-released/
@@ -195,7 +219,8 @@ export class GraphqlQueryBuilder {
 										"commitCount",
 										"currentUserTodos",
 										"mergedAt",
-										"userDiscussionsCount"
+										"userDiscussionsCount",
+										"conflicts"
 									]
 								},
 								next: {
@@ -203,6 +228,27 @@ export class GraphqlQueryBuilder {
 										key: "userPermissions",
 										removals: ["canMerge"]
 									}
+								}
+							}
+						}
+					}
+				}
+			},
+			{
+				selector: (currentVersion: string) => semver.lt(currentVersion, "13.6.4"),
+				query: {
+					head: {
+						value: {
+							key: "discussionFragment"
+						},
+						next: {
+							value: {
+								key: "notes"
+							},
+							next: {
+								value: {
+									key: "nodes",
+									removals: ["resolved"]
 								}
 							}
 						}
@@ -224,7 +270,7 @@ export class GraphqlQueryBuilder {
 							next: {
 								value: {
 									key: "nodes",
-									removals: ["resolved", "systemNoteIconName"]
+									removals: ["systemNoteIconName"]
 								}
 							}
 						}

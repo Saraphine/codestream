@@ -33,10 +33,11 @@ import { createPatch, ParsedDiff, parsePatch } from "diff";
 import * as fs from "fs";
 import { memoize } from "lodash-es";
 import * as path from "path";
-import { CommitsChangedData, WorkspaceChangedData } from "protocol/agent.protocol";
-import { Disposable, Event } from "vscode-languageserver";
+import { Disposable, Event, Range } from "vscode-languageserver";
 import { URI } from "vscode-uri";
+import { SessionContainer } from "../container";
 import { Logger } from "../logger";
+import { CommitsChangedData, WorkspaceChangedData } from "../protocol/agent.protocol";
 import { FileStatus } from "../protocol/api.protocol.models";
 import { CodeStreamSession } from "../session";
 import { Iterables, log, Strings } from "../system";
@@ -307,11 +308,20 @@ export class GitService implements IGitService, Disposable {
 		};
 	}
 
-	async getFileContentForRevision(uri: URI, ref: string): Promise<string | undefined>;
-	async getFileContentForRevision(path: string, ref: string): Promise<string | undefined>;
+	async getFileContentForRevision(
+		uri: URI,
+		ref: string,
+		range?: Range
+	): Promise<string | undefined>;
+	async getFileContentForRevision(
+		path: string,
+		ref: string,
+		range?: Range
+	): Promise<string | undefined>;
 	async getFileContentForRevision(
 		uriOrPath: URI | string,
-		ref: string
+		ref: string,
+		range?: Range
 	): Promise<string | undefined> {
 		const repoAndRelativePath = await this._getRepoAndRelativePath(uriOrPath);
 		if (!repoAndRelativePath) return undefined;
@@ -324,7 +334,18 @@ export class GitService implements IGitService, Disposable {
 				`${ref}:./${relativePath}`,
 				"--"
 			);
-			return Strings.normalizeFileContents(data);
+			let contents = Strings.normalizeFileContents(data);
+			if (range) {
+				const lines = contents.split("\n").slice(range.start.line, range.end.line + 1);
+				if (range.start.line === range.end.line) {
+					lines[0] = lines[0].substring(range.start.character, range.end.character);
+				} else {
+					lines[0] = lines[0].substring(range.start.character);
+					lines[lines.length - 1] = lines[lines.length - 1].substring(0, range.end.character);
+				}
+				contents = lines.join("\n");
+			}
+			return contents;
 		} catch (ex) {
 			const msg = ex && ex.toString();
 			if (
@@ -367,7 +388,12 @@ export class GitService implements IGitService, Disposable {
 	async fetchAllRemotes(repoPath: string): Promise<boolean> {
 		try {
 			await git(
-				{ cwd: repoPath, env: { GIT_TERMINAL_PROMPT: "0" }, throwRawExceptions: true },
+				{
+					cwd: repoPath,
+					env: { GIT_TERMINAL_PROMPT: "0" },
+					throwRawExceptions: true,
+					timeout: 10 * 1000
+				},
 				"fetch",
 				"--all"
 			);
@@ -710,14 +736,17 @@ export class GitService implements IGitService, Disposable {
 		return push || fetch;
 	}
 
-	getRepoRemotes(repoUri: URI): Promise<GitRemote[]>;
-	getRepoRemotes(repoPath: string): Promise<GitRemote[]>;
+	getRepoRemotes(repoUri: URI, reloadMemoized?: boolean): Promise<GitRemote[]>;
+	getRepoRemotes(repoPath: string, reloadMemoized?: boolean): Promise<GitRemote[]>;
 	@log({
 		exit: (result: GitRemote[]) =>
 			`returned [${result.length !== 0 ? result.map(r => r.uri.toString(true)).join(", ") : ""}]`
 	})
-	getRepoRemotes(repoUriOrPath: URI | string): Promise<GitRemote[]> {
+	getRepoRemotes(repoUriOrPath: URI | string, reloadMemoized?: boolean): Promise<GitRemote[]> {
 		const repoPath = typeof repoUriOrPath === "string" ? repoUriOrPath : repoUriOrPath.fsPath;
+		if (reloadMemoized) {
+			(this._memoizedGetRepoRemotes as any).cache.delete(repoPath);
+		}
 		return this._memoizedGetRepoRemotes(repoPath);
 	}
 	private async _getRepoRemotes(repoPath: string) {
@@ -737,16 +766,17 @@ export class GitService implements IGitService, Disposable {
 		return this._gitServiceLite.getRepoRoot(filePath);
 	}
 
-	async fetchReference(repo: GitRepository, ref: string): Promise<void> {
+	async fetchReference(repo: GitRepository, ref: string): Promise<boolean> {
 		const remotes = await repo.getWeightedRemotes();
 		for (const remote of remotes) {
 			try {
 				await git({ cwd: repo.path }, "fetch", remote.name, ref);
 				Logger.log(`Fetched ref ${ref} from ${remote.name} in ${repo.path}`);
-				return;
+				return true;
 			} catch (ignore) {}
 		}
 		Logger.log(`Could not find ref ${ref} in any remote of ${repo.path}`);
+		return false;
 	}
 
 	async getCommit(repoUri: URI, ref: string): Promise<GitCommit | undefined>;
@@ -809,6 +839,8 @@ export class GitService implements IGitService, Disposable {
 				.replace(/^\//, "")
 				.replace(/\/$/, "")
 				.replace(/\/\/+/g, "/")
+				.replace(/\(/g, "")
+				.replace(/\)/g, "")
 				// 7.
 				.replace(/\.$/, "")
 				// 8.
@@ -1376,8 +1408,23 @@ export class GitService implements IGitService, Disposable {
 		return this._repositories.get();
 	}
 
-	getRepositoryById(id: string): Promise<GitRepository | undefined> {
-		return this._repositories.getById(id);
+	async getRepositoryById(id: string): Promise<GitRepository | undefined> {
+		const { repositoryMappings } = SessionContainer.instance();
+		let repo = await this._repositories.getById(id);
+		if (!repo) {
+			const loadedRepos = Array.from(await this.getRepositories());
+			const reposString = loadedRepos.map(_ => `${_.id}=${_.path}`).join(", ");
+			Logger.log(
+				`Repo ${id} not loaded - falling back to mappings. Currently loaded repos: ${reposString}`
+			);
+			const mappedPath = await repositoryMappings.getByRepoId(id);
+			if (mappedPath) {
+				repo = await this.getRepositoryByFilePath(mappedPath);
+			} else {
+				Logger.log(`No mapping found for repo ${id}`);
+			}
+		}
+		return repo;
 	}
 
 	/**

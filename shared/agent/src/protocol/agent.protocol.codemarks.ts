@@ -14,12 +14,12 @@ import {
 	CSLocationArray,
 	CSMarker,
 	CSMarkerLocations,
+	CSObjectStream,
 	CSReferenceLocation,
 	CSRepository,
-	CSReview,
 	CSStream
 } from "./api.protocol";
-import { Attachment, ShareTarget } from "./api.protocol.models";
+import { Attachment } from "./api.protocol.models";
 
 export interface CodemarkPlus extends CSCodemark {
 	markers?: CSMarker[];
@@ -31,6 +31,8 @@ export interface CreateCodemarkRequest extends Omit<CSCreateCodemarkRequest, "te
 	markers?: CreateMarkerRequest[];
 	// codemarks can be part of a review
 	reviewId?: string;
+	// ... or a "code error"
+	codeErrorId?: string;
 	// if part of a review, it can be a change request
 	isChangeRequest?: boolean;
 }
@@ -99,7 +101,7 @@ export interface CreateShareableCodemarkRequest {
 export interface CreateShareableCodemarkResponse {
 	codemark: CodemarkPlus;
 	post: PostPlus;
-	stream: CSDirectStream | CSChannelStream;
+	stream: CSDirectStream | CSChannelStream | CSObjectStream;
 	markerLocations?: CSMarkerLocations[];
 }
 
@@ -137,6 +139,8 @@ export const CreateCodemarkPermalinkRequestType = new RequestType<
 
 export interface FetchCodemarksRequest {
 	streamId?: string;
+	streamIds?: string[];
+	codemarkIds?: string[];
 	before?: number;
 	byLastAcivityAt?: boolean;
 }

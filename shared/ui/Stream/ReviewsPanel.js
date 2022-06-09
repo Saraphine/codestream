@@ -429,7 +429,7 @@ export class SimpleReviewsPanel extends Component {
 					<div>
 						<p>
 							Code Reviews are the building blocks of your team’s process.{" "}
-							<a href="https://docs.codestream.com/userguide/workflow/feedback-requests/">
+							<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/request-feedback/">
 								Learn more about how to use code review.
 							</a>
 						</p>

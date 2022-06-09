@@ -38,6 +38,7 @@ export enum BuiltInCommands {
 	CursorMove = "cursorMove",
 	Diff = "vscode.diff",
 	EditorScroll = "editorScroll",
+	ExecuteDocumentHighlights = "vscode.executeDocumentHighlights",
 	ExecuteDocumentSymbolProvider = "vscode.executeDocumentSymbolProvider",
 	ExecuteCodeLensProvider = "vscode.executeCodeLensProvider",
 	GoToNextDiff = "workbench.action.compareEditor.nextChange",

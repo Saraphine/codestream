@@ -1,3 +1,8 @@
+import {
+	configureAndConnectProvider,
+	disconnectProvider,
+	removeEnterpriseProvider
+} from "@codestream/webview/store/providers/actions";
 import React, { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import ScrollBox from "./ScrollBox";
@@ -9,16 +14,10 @@ import { HostApi } from "../webview-api";
 import { PanelHeader } from "../src/components/PanelHeader";
 import { PROVIDER_MAPPINGS } from "./CrossPostIssueControls/types";
 import { isConnected, getConnectedSharingTargets } from "../store/providers/reducer";
-import {
-	openPanel,
-	disconnectProvider,
-	connectProvider,
-	closePanel,
-	removeEnterpriseProvider
-} from "./actions";
+import { closePanel } from "./actions";
 import Icon from "./Icon";
 import { Button } from "../src/components/Button";
-import { DropdownButton } from "./Review/DropdownButton";
+import { DropdownButton } from "./DropdownButton";
 import { PrePRProviderInfoModal } from "./PrePRProviderInfoModal";
 import { Dialog } from "../src/components/Dialog";
 
@@ -29,6 +28,7 @@ export const Provider = styled(Button)`
 	.icon {
 		margin-right: 5px;
 	}
+	position: relative;
 `;
 
 const ProviderDropdown = styled(DropdownButton)`
@@ -85,6 +85,11 @@ export const IntegrationsPanel = () => {
 		const currentUserIsAdmin = (team.adminIds || []).includes(user.id);
 
 		const connectedProviders = Object.keys(providers).filter(id => isConnected(state, { id }));
+		const observabilityProviders = Object.keys(providers)
+			.filter(id => ["newrelic"].includes(providers[id].name))
+			.filter(id => !connectedProviders.includes(id))
+			.sort((a, b) => providers[a].name.localeCompare(providers[b].name));
+
 		const codeHostProviders = Object.keys(providers)
 			.filter(id =>
 				[
@@ -115,6 +120,7 @@ export const IntegrationsPanel = () => {
 			webviewFocused: state.context.hasFocus,
 			providers,
 			codeHostProviders,
+			observabilityProviders,
 			issueProviders,
 			messagingProviders,
 			connectedProviders,
@@ -193,14 +199,7 @@ export const IntegrationsPanel = () => {
 		const { providers } = derivedState;
 		return providerIds.map(providerId => {
 			const provider = providers[providerId];
-			const {
-				name,
-				isEnterprise,
-				host,
-				needsConfigure,
-				needsConfigureForOnPrem,
-				forEnterprise
-			} = provider;
+			const { name, isEnterprise, host } = provider;
 			const display = PROVIDER_MAPPINGS[name];
 			if (!display) return null;
 
@@ -208,6 +207,13 @@ export const IntegrationsPanel = () => {
 			const displayName = isEnterprise
 				? `${display.displayName} - ${displayHost}`
 				: display.displayName;
+			const action = () => dispatch(configureAndConnectProvider(providerId, "Integrations Panel"));
+			/*
+
+			// Per https://newrelic.atlassian.net/browse/CDSTRM-1591, the need for the "pre-PR" modal
+			// is discontinued ... if we bring it back, suggest we figure out a way not to repeat the
+			// logic below across all our launch integration points - Colin
+
 			let action;
 			if (needsConfigure || (derivedState.isOnPrem && needsConfigureForOnPrem)) {
 				// otherwise, if it's a provider that needs to be pre-configured,
@@ -228,9 +234,10 @@ export const IntegrationsPanel = () => {
 							action: () => dispatch(connectProvider(providerId, "Integrations Panel")),
 							onClose: () => setPropsForPrePRProviderInfoModal(undefined)
 						});
-				} else action = () => dispatch(connectProvider(providerId, "Integrations Panel"));
+				} else
+					action = () => dispatch(connectProvider(providerId, "Integrations Panel"));
 			}
-
+			*/
 			if (isEnterprise && derivedState.currentUserIsAdmin) {
 				const items = [
 					{
@@ -272,7 +279,7 @@ export const IntegrationsPanel = () => {
 				elements.push(
 					<Provider
 						key={providerId}
-						onClick={() => dispatch(connectProvider(providerId, "Integrations Panel"))}
+						onClick={() => dispatch(configureAndConnectProvider(providerId, "Integrations Panel"))}
 					>
 						{display.icon && <Icon name={display.icon} />}
 						{`Add ${display.displayName} ${display.groupName}`}
@@ -282,7 +289,7 @@ export const IntegrationsPanel = () => {
 				elements.push(
 					<Provider
 						key={providerId}
-						onClick={() => dispatch(connectProvider(providerId, "Integrations Panel"))}
+						onClick={() => dispatch(configureAndConnectProvider(providerId, "Integrations Panel"))}
 					>
 						{display.icon && <Icon name={display.icon} />}
 						{display.displayName}
@@ -326,6 +333,15 @@ export const IntegrationsPanel = () => {
 								</IntegrationButtons>
 							</>
 						)}
+						{derivedState.observabilityProviders.length > 0 && (
+							<>
+								<h2>Observability</h2>
+								<IntegrationButtons>
+									{renderProviders(derivedState.observabilityProviders)}
+								</IntegrationButtons>
+							</>
+						)}
+
 						<h2>Code Host &amp; Issue Providers</h2>
 						<IntegrationButtons>
 							{renderProviders(derivedState.codeHostProviders)}

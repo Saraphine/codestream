@@ -1,5 +1,4 @@
-import { first } from "lodash-es";
-import { ActionType, Index } from "../common";
+import { ActionType } from "../common";
 import * as actions from "./actions";
 import { clearCurrentPullRequest, setCurrentPullRequest } from "../context/actions";
 import { ProviderPullRequestActionsTypes, ProviderPullRequestsState } from "./types";
@@ -12,6 +11,7 @@ import {
 	FetchThirdPartyPullRequestPullRequest,
 	GitLabMergeRequest
 } from "@codestream/protocols/agent";
+import { logError } from "@codestream/webview/logger";
 
 type ProviderPullRequestActions =
 	| ActionType<typeof actions>
@@ -69,6 +69,16 @@ export function reduceProviderPullRequests(
 			newState[action.payload.providerId] = {
 				data: action.payload.data
 			};
+			return {
+				myPullRequests: newState,
+				pullRequests: { ...state.pullRequests }
+			};
+		}
+		case ProviderPullRequestActionsTypes.UpdatePullRequestFilter: {
+			const newState = { ...state.myPullRequests };
+			if (newState[action.payload.providerId].data) {
+				newState[action.payload.providerId].data![action.payload.index] = action.payload.data;
+			}
 			return {
 				myPullRequests: newState,
 				pullRequests: { ...state.pullRequests }
@@ -462,6 +472,39 @@ export function reduceProviderPullRequests(
 										.find((_: any) => _.content === directive.data.reaction.content)
 										.users.nodes.push(directive.data.reaction.user);
 								}
+								// adding reactions to comments or replies
+								if (!node) {
+									// comments node array
+									let comments = pr.timelineItems.nodes.find(
+										_ => _.__typename === "PullRequestReview"
+									)?.comments?.nodes;
+
+									for (let i = 0; i < comments.length; i++) {
+										// If found id match on comment, update pr reactionGroup user for comment
+										if (comments[i]?.id === directive.data.subject.id) {
+											pr.timelineItems.nodes
+												.find(_ => _.__typename === "PullRequestReview")
+												?.comments?.nodes[i].reactionGroups.find(
+													(_: any) => _.content === directive.data.reaction.content
+												)
+												.users.nodes.push(directive.data.reaction.user);
+											// No id match on comment, so try deeper search on replies associated with comment
+										} else {
+											let replies = comments[i]?.replies;
+											for (let j = 0; j < replies.length; j++) {
+												// If found id match on reply, update pr reactionGroup user for reply
+												if (replies[j]?.id === directive.data.subject.id) {
+													pr.timelineItems.nodes
+														.find(_ => _.__typename === "PullRequestReview")
+														?.comments?.nodes[i].replies[j].reactionGroups.find(
+															(_: any) => _.content === directive.data.reaction.content
+														)
+														.users.nodes.push(directive.data.reaction.user);
+												}
+											}
+										}
+									}
+								}
 							}
 						} else if (directive.type === "removeReaction") {
 							if (directive.data.subject.__typename === "PullRequest") {
@@ -478,6 +521,56 @@ export function reduceProviderPullRequests(
 									).users.nodes = node.reactionGroups
 										.find((_: any) => _.content === directive.data.reaction.content)
 										.users.nodes.filter((_: any) => _.login !== directive.data.reaction.user.login);
+								}
+								// remove reactions to comments or replies
+								if (!node) {
+									// comments node array
+									let comments = pr.timelineItems.nodes.find(
+										_ => _.__typename === "PullRequestReview"
+									)?.comments?.nodes;
+
+									for (let i = 0; i < comments.length; i++) {
+										// If found id match on comment, remove user from reactionGroup
+										if (comments[i]?.id === directive.data.subject.id) {
+											const reactionGroupIndex = pr.timelineItems.nodes
+												.find(_ => _.__typename === "PullRequestReview")
+												?.comments?.nodes[i]?.reactionGroups.find(
+													(_: any) => _.content === directive.data.reaction.content
+												)
+												.users.nodes.findIndex(
+													(_: any) => _.login === directive.data.reaction.user.login
+												);
+											pr.timelineItems.nodes
+												.find(_ => _.__typename === "PullRequestReview")
+												?.comments?.nodes[i]?.reactionGroups.find(
+													(_: any) => _.content === directive.data.reaction.content
+												)
+												.users.nodes.splice(reactionGroupIndex, 1);
+											// No id match on comment, so try deeper search on replies associated with comment
+										} else {
+											let replies = comments[i]?.replies;
+											for (let j = 0; j < replies.length; j++) {
+												// If found id match on reply, remove user from reactionGroup
+												if (replies[j]?.id === directive.data.subject.id) {
+													const reactionGroupIndex = pr.timelineItems.nodes
+														.find(_ => _.__typename === "PullRequestReview")
+														?.comments?.nodes[i].replies[j].reactionGroups.find(
+															(_: any) => _.content === directive.data.reaction.content
+														)
+														.users.nodes.findIndex(
+															(_: any) => _.login === directive.data.reaction.user.login
+														);
+
+													pr.timelineItems.nodes
+														.find(_ => _.__typename === "PullRequestReview")
+														?.comments?.nodes[i].replies[j].reactionGroups.find(
+															(_: any) => _.content === directive.data.reaction.content
+														)
+														.users.nodes.splice(reactionGroupIndex, 1);
+												}
+											}
+										}
+									}
 								}
 							}
 						} else if (directive.type === "removeComment") {
@@ -836,59 +929,147 @@ export const getProviderPullRequestRepo = createSelector(
 	getRepos,
 	getCurrentProviderPullRequest,
 	getPullRequestProviderId,
-	(repos, currentPr, providerId) => {
-		let currentRepo: CSRepository | undefined = undefined;
-
-		try {
-			if (!currentPr || !currentPr.conversations) {
-				return undefined;
-			}
-			let repoName;
-			let repoUrl;
-			if (providerId && providerId.indexOf("github") > -1) {
-				// this is the github case
-				repoName = currentPr.conversations.repository.repoName.toLowerCase();
-				repoUrl = currentPr.conversations.repository.url.toLowerCase();
-			} else if (providerId && providerId.indexOf("gitlab") > -1) {
-				if (!currentPr.conversations.project) {
-					console.error("Missing project name for: ", currentPr);
-				}
-				// this is for gitlab
-				repoName = currentPr.conversations.project?.name?.toLowerCase();
-				repoUrl = currentPr.conversations.project.mergeRequest.webUrl.toLowerCase();
-			}
-			let matchingRepos = repos.filter(_ =>
-				_.remotes.some(
-					r =>
-						r.normalizedUrl &&
-						r.normalizedUrl.length > 2 &&
-						r.normalizedUrl.match(/([a-zA-Z0-9]+)/) &&
-						repoUrl.indexOf(r.normalizedUrl.toLowerCase()) > -1
-				)
-			);
-			if (matchingRepos.length === 1) {
-				currentRepo = matchingRepos[0];
-			} else {
-				let matchingRepos2 = repos.filter(_ => _.name && _.name.toLowerCase() === repoName);
-				if (matchingRepos2.length != 1) {
-					matchingRepos2 = repos.filter(_ =>
-						_.remotes.some(r => repoUrl.indexOf(r.normalizedUrl.toLowerCase()) > -1)
-					);
-					if (matchingRepos2.length === 1) {
-						currentRepo = matchingRepos2[0];
-					} else {
-						console.error(`Could not find repo for repoName=${repoName} repoUrl=${repoUrl}`);
-					}
-				} else {
-					currentRepo = matchingRepos2[0];
-				}
-			}
-		} catch (error) {
-			console.error(error);
-		}
-		return currentRepo;
+	(repos: CSRepository[], currentPr, providerId?: string) => {
+		const result = getProviderPullRequestRepoObjectCore(repos, currentPr, providerId);
+		return result?.currentRepo;
 	}
 );
+
+/**
+ *  Attempts to get a CS repo for the current PR
+ */
+export const getProviderPullRequestRepoObject = createSelector(
+	getRepos,
+	getCurrentProviderPullRequest,
+	getPullRequestProviderId,
+	(repos: CSRepository[], currentPr, providerId?: string) => {
+		return getProviderPullRequestRepoObjectCore(repos, currentPr, providerId);
+	}
+);
+
+export const getProviderPullRequestRepoObjectCore = (
+	repos: CSRepository[],
+	currentPr: {
+		conversations: {
+			// github
+			repository?: {
+				repoName: string;
+				url: string;
+			};
+			// gitlab
+			project?: {
+				name: string;
+				repoName: string;
+				mergeRequest: {
+					webUrl: string;
+				};
+			};
+		};
+	},
+	providerId?: string
+) => {
+	const result: {
+		error?: string;
+		currentRepo?: CSRepository;
+		repos?: CSRepository[];
+		repoName?: string;
+		repoUrl?: string;
+		reason?: "remote" | "repoName" | "matchedOnProviderUrl" | "closestMatch";
+	} = {};
+
+	try {
+		if (!currentPr || !currentPr.conversations) {
+			return {
+				error: "missing current pr or conversations"
+			};
+		}
+		let repoName;
+		let repoUrl;
+		if (
+			providerId &&
+			providerId.indexOf("github") > -1 &&
+			currentPr.conversations &&
+			currentPr.conversations.repository
+		) {
+			// this is the github case
+			repoName = currentPr.conversations.repository.repoName.toLowerCase();
+			repoUrl = currentPr.conversations.repository.url.toLowerCase();
+		} else if (providerId && providerId.indexOf("gitlab") > -1) {
+			if (!currentPr.conversations.project) {
+				result.error = "Missing project name for: " + currentPr;
+			}
+			// this is for gitlab
+			repoName = currentPr.conversations.project?.name?.toLowerCase();
+			repoUrl = currentPr.conversations.project!.mergeRequest.webUrl?.toLowerCase();
+		}
+		result.repoName = repoName;
+		result.repoUrl = repoUrl;
+		result.repos = repos;
+
+		const matchingRepos = repos.filter(_ =>
+			_.remotes.some(
+				r =>
+					r?.normalizedUrl &&
+					r?.normalizedUrl.length > 2 &&
+					r?.normalizedUrl.match(/([a-zA-Z0-9]+)/) &&
+					repoUrl?.indexOf(r?.normalizedUrl?.toLowerCase()) > -1
+			)
+		);
+
+		if (matchingRepos.length === 1) {
+			result.currentRepo = matchingRepos[0];
+			result.reason = "remote";
+		} else {
+			let matchingRepos2 = repos.filter(_ => _.name && _.name.toLowerCase() === repoName);
+			if (matchingRepos2.length != 1) {
+				matchingRepos2 = repos.filter(_ =>
+					_.remotes.some(r => repoUrl?.indexOf(r?.normalizedUrl?.toLowerCase()) > -1)
+				);
+				if (matchingRepos2.length === 1) {
+					result.currentRepo = matchingRepos2[0];
+					result.reason = "matchedOnProviderUrl";
+				} else {
+					// try to match on the best/closet repo
+					const bucket: { repo: CSRepository; points: number }[] = [];
+					const splitRepoUrl = repoUrl?.split("/");
+					for (const repo of repos) {
+						let points = 0;
+						for (const remote of repo.remotes) {
+							const split = remote.normalizedUrl?.split("/");
+							if (split?.length) {
+								for (const s of split) {
+									if (s && splitRepoUrl?.includes(s)) {
+										points++;
+									}
+								}
+							}
+						}
+						bucket.push({ repo: repo, points: points });
+					}
+					if (bucket.length) {
+						bucket.sort((a, b) => b.points - a.points);
+						result.currentRepo = bucket[0].repo;
+						result.reason = "closestMatch";
+					} else {
+						result.error = `Could not find repo for repoName=${repoName} repoUrl=${repoUrl}`;
+					}
+				}
+			} else {
+				result.currentRepo = matchingRepos2[0];
+				result.reason = "repoName";
+			}
+		}
+	} catch (ex) {
+		result.error = typeof ex === "string" ? ex : ex.message;
+		console.error(ex);
+	}
+	if (result.error || !result.currentRepo) {
+		logError(result.error || "Could not find currentRepo", {
+			result
+		});
+	}
+	return result;
+};
 
 export const getProviderPullRequestCollaborators = createSelector(
 	getCurrentProviderPullRequest,

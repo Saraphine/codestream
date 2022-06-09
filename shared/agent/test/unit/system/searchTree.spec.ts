@@ -1,5 +1,6 @@
 import { expect } from "chai";
-import { describe, it } from "mocha";
+require("mocha").describe;
+require("mocha").it;
 import { TernarySearchTree } from "../../../src/system";
 
 describe("searchTree.ts", () => {

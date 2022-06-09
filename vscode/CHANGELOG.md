@@ -1,5 +1,370 @@
 # Change Log
 
+## [13.1.0] - 2022-6-8
+
+### Fixed
+
+- Fixes an issue where the CodeStream agent dies after unhandled exception in RT message resolution
+- Fixes an issue with the rendering of reactions to pull request comments
+- Fixes an issue with author name missing in pull request comments
+- Fixes an issue with duplicate entries appear in the selection of entities from New Relic
+- Fixes a console error bug where the PR conversation endpoint was being requested without proper ids
+
+## [13.0.1] - 2022-6-6
+
+### Added
+
+- Adds support for code-level metrics for .NET
+
+### Fixed
+
+- Fixes an issue preventing connections to Trello and Asana
+
+## [13.0.0] - 2022-6-2
+
+### Added
+
+- Adds a new user experience for the pull request integration, including a tree view for commenting on pull requests and reviewing existing comments
+
+### Changed
+
+- Files' view state now syncs with GitHub when reviewing pull requests
+- Include stock Node.js executable to run CodeStream agent
+- Updated copy on sign-in buttons to reflect code or password option
+
+### Fixed
+
+- Addresses [#837](https://github.com/TeamCodeStream/CodeStream/issues/837) &mdash; Support for Apple Silicon (universal binary)
+- Fixes an `Error fetching cards from Jira` on extension startup
+- Fixes an issue where the notification setting for pull request assignments wouldn't appear when connected to GitHub or GitLab cloud
+- Fixes an issue where your own commit would trigger a desktop notification to review changes
+
+## [12.18.0] - 2022-5-13
+
+### Fixed
+
+- Addresses [#967](https://github.com/TeamCodeStream/CodeStream/issues/967) &mdash; newrelic_agent.log file created
+
+## [12.17.0] - 2022-5-12
+
+### Fixed
+
+- Fixes an issue preventing you from connecting to Jira from Linux
+- Fixes an issue where a custom issue filter wouldn't get applied without a reload
+
+## [12.16.0] - 2022-4-28
+
+### Added
+
+- Adds options to connect to GitHub and GitLab cloud services via personal access token
+
+### Changed
+
+- The Pull Request and Issues sections automatically check for new PRs/issues once per minute
+- Deprecated the OAuth version of the Jira Server integration
+- Made validation of org entry for Azure DevOps more robust
+- Connections to services via personal access tokens are now validated immediately
+- Improved validations for base URLs entered when connecting to on-prem services
+- When certain CodeStream settings in the IDE are changed, such as Disable Strict SSL, the user is prompted to reload their IDE
+- Provide guidance to user when situation idetified in [GitHub Issue #495](https://github.com/TeamCodeStream/codestream/issues/495#issuecomment-827646602) arises
+- When connecting to GitHub or GitHub Enterprise a link is provided that will automatically populate the form to create a personal access token with the appropriate scopes
+- When associating a forked repo with an entity on New Relic the upstream remote is now used by default
+
+### Fixed
+
+- Fixes an issue where the Assignee list when creating an issue on Jira Server didn't include all possible people 
+
+## [12.15.0] - 2022-4-7
+
+### Changed
+
+- Pull requests and issues from archived GitHub repos are no longer displayed by default
+
+## [12.14.0] - 2022-4-1
+
+### Added
+
+- Adds support for remote URLs using the git protocol
+
+### Changed
+
+- Changes the color of the icon displayed in the editor gutter for pull request comments to green
+
+### Fixed
+
+- Fixes an issue where commenting in a feedback request cleared out the viewed state for all files
+- Fixes an issue with non-repository entries appearing in the Observability section
+- Fixes issues with the display of headshots in pull requests from GitHub Enterprise
+
+## [12.13.0] - 2022-3-22
+
+### Added
+
+- Adds a setting on the Notifications page to control desktop notifications for pull request assignments
+
+### Changed
+
+- Application type is now display for each service in the entity-selection dropdowns in the Observability section
+- All personal access token fields are now treated like masked password fields when connection to various services
+- Improved validation messages when attempting to load a PR from URL
+
+### Fixed
+
+- Fixes an issue where issues wouldn't appear in the Issues section of the CodeStream pane without clicking Refresh
+- Fixes an issue with the parsing of Java filepaths in stack traces for errors 
+- Fixes an issue with broken images in the bot checks section of PRs
+- Addresses [#889](https://github.com/TeamCodeStream/CodeStream/issues/889) &mdash; Comment thread status (Resolved/Unresolved) are incorrect initially or if changed externally
+- Addresses [#898](https://github.com/TeamCodeStream/CodeStream/issues/898) &mdash; "404 Project Not found" when creating new merge request
+
+## [12.12.0] - 2022-3-1
+
+### Changed
+
+- Complete refactor of the "Open a Pull Request" form
+- Allow for selection of repo when opening an error from New Relic where the service is associated with multiple repos
+- Jira tickets with a resolution set are exluded from the Issues section
+
+### Fixed
+
+- Fixes an issue with repo associations not working for remote URLs that start with `ssh://`
+- Addresses [#867](https://github.com/TeamCodeStream/CodeStream/issues/867) &mdash; Can't get new relic observability to actually show something other than "set up monitoring"
+- Fixes an issue where you'd get a "object Object" error trying to submit a feedback request against a repo with no commits and no remotes
+- Fixes an issue where the list of errors in the Observability section was limited when the recent errors had very high occurence counts
+- Addresses [#848](https://github.com/TeamCodeStream/CodeStream/issues/848) &mdash; Git command needs some escaping
+- Fixes a `PR Api is not compatible` error when trying to access a GitHub Enterprise instance when not connected to the VPN
+- Addresses [#847](https://github.com/TeamCodeStream/CodeStream/issues/847) &mdash; Slack channel selector stopped working
+- Fixes an unexpected error when opening a pull request without the given repo open in your IDE
+- Addresses [#844](https://github.com/TeamCodeStream/CodeStream/issues/844) &mdash; Codemarks position themselves at the end of file
+
+## [12.11.0] - 2022-2-18
+
+### Fixed
+
+- Addresses [#699](https://github.com/TeamCodeStream/CodeStream/issues/699) &mdash; GitLab - "Checkout Branch" and "Code Review" broken
+
+## [12.10.0] - 2022-2-16
+
+### Changed
+
+- Observability section is now placed at the top of the sidebar for users signing up with New Relic
+- Jira tickets with a status of `Resolved` are not displayed in the Issues section
+
+### Fixed
+
+- Fixes an issue where the the merge action for GitHub Enterprise PRs was always defaulting to "Squash & merge"
+- Fixes an issue where extraneous diffs in a Feedback Request resulted in a error about payload size
+- Fixes an issue where GitHub Enterprise would not work properly if the server was not accessible when CodeStream started
+
+## [12.9.0] - 2022-2-9
+
+### Changed
+
+- Reorganized Assignee dropdown in New Relic error groups in "Suggestions from Git" and "My Organization"
+- Removed the Work In Progress section
+
+### Fixed
+
+- Fixes an issue with an endless spinner on the acitivity feed in an organization with more than 50 posts but none of them are for the code open in the IDE
+- Fixes an issue with excessive CPU usage
+- Fixes an issue where the Connect to New Relic page would be shown after signup even if the user was already connected
+
+## [12.8.0] - 2022-2-1
+
+### Changed
+
+- Don't prompt for repo associations in the Observability section if there are no entities on New Relic
+- Jira issues in `Done` status are excluded from the Issues section
+- The Pull Requests section of the CodeStream pane is always display, regardless of what repos you have open in your IDE
+
+### Fixed
+
+- Addresses [#836](https://github.com/TeamCodeStream/CodeStream/issues/836) &mdash; CodeStream Plugin Crashes PHPStorm
+- Addresses [#713](https://github.com/TeamCodeStream/CodeStream/issues/713) &mdash; Saved query executing differently in different projects/windows
+- Fixes an issue with incorrect options being displayed when creating a permalink (i.e., add/remove range, pin)
+- Fixes an issue where the filter in the Codemarks section defaults to "[repository]" for a new user
+
+## [12.7.0] - 2022-1-24
+
+### Added
+
+- Adds the ability to sign into CodeStream using a code sent to you via email
+- Adds the ability to sign up for CodeStream using your New Relic One user api key
+- Adds a search box to the entity selection dropdown in the Observability section
+- Adds the ability for organization admins to delete their own organizations
+
+### Changed
+
+- Notifications about unreviewed commmits when you pull are now off by default for new users
+
+### Fixed
+
+- Addresses [#767](https://github.com/TeamCodeStream/CodeStream/issues/767) &mdash; Slack channel-selector dropdown not working
+- Fixes an issue where CodeStream doesn't think you have the repo open when viewing a merge request
+- Fixes an issue where issues from a Jira instance with many projects would 
+- Fixes an issue where channels for a workspace with a very large number of channels take a long time to load
+
+## [12.6.0] - 2022-1-4
+
+### Changed
+
+- Improved UI for unassigned errors
+
+### Fixed
+
+- Addresses [#734](https://github.com/TeamCodeStream/CodeStream/issues/734) &mdash; Merge Request view is not showing if there is merge conflict
+- Fixes an issue with creating a PR across forks when there are a large number of forks for the repo
+- Fixes an issue with creating a codemark in an uncommitted file
+
+## [12.5.0] - 2021-12-21
+
+### Changed
+
+- Simplified signup flow
+- Generalize caching of related objects returned with each fetch
+
+### Fixed
+
+- Fixes an issue preventing you from recreating the "recent" query in the Pull Requests section
+- Fixes an issue with a `resolveStackTrace failed` error when opening error in IDE
+
+## [12.4.0] - 2021-12-14
+
+### Changed
+
+- CodeStream now remembers the last organization you had selected when you sign in
+
+### Fixed
+
+- Fixes a race condition that could make error stack traces not clickable
+- Fixes an issue parsing stack traces with Windows paths
+- Fixes an issue that caused an exception `Assert: must be called on EDT` when opening an error
+- Addresses [#778](https://github.com/TeamCodeStream/CodeStream/issues/778) &mdash; VSCODE PR fails if forked-repo branch has same name as the (base) repo branch
+- Fixes an issue with the first codemark in a feedback request in a new session taking a long time to submit
+- Fixes an issue that resulted in an error associating a repo with a NR1 entity
+
+## [12.3.1] - 2021-11-23
+
+### Fixed
+
+- Fixes an issue related to the connection of certain providers
+
+## [12.3.0] - 2021-11-23
+
+### Added
+
+- Adds an intro tour the first time someone opens an error group
+
+### Fixed
+
+- Fixes an issue with the parsing of stack traces in error groups
+
+## [12.2.0] - 2021-11-22
+
+### Changed
+
+- Codemarks created in an error group now reference and link to the error group
+- When you select an issue to start work in the Issues section it is now identified via an arrow to the left of the entry
+- Error stack trace resolution is now asynchronous and doesn’t block initial error loading
+
+### Fixed
+
+- Addresses [#774](https://github.com/TeamCodeStream/CodeStream/issues/774) &mdash; Pending review comments in GH PR aren't being saved
+- Addresses [#765](https://github.com/TeamCodeStream/CodeStream/issues/765) &mdash; Field 'draft' doesn't exist on type 'MergeRequest'
+- Addresses [#707](https://github.com/TeamCodeStream/CodeStream/issues/707) &mdash; GLSM "TypeError: Cannot read property 'mergeRequest' of null"
+- Addresses [#597](https://github.com/TeamCodeStream/CodeStream/issues/597) &mdash; GitLab self hosted error. Field 'userDiscussionsCount' and 'reviewers' doesn't exist on type 'MergeRequest'
+
+## [12.1.0] - 2021-11-12
+
+### Added
+
+- Adds checks during onboarding for New Relic users to see if colleagues already have an organization on CodeStream
+
+### Changed
+
+- Bypass onboarding step for create/join organization if there are no organizations to join
+
+### Fixed
+
+- Addresses [#764](https://github.com/TeamCodeStream/CodeStream/issues/764) &mdash; GitLab open merge request error field 'workInProgress'
+
+## [12.0.3] - 2021-11-5
+
+### Changed
+
+- Prevent issue codemarks and permalinks when commenting on an error from New Relic
+- Display stack traces in errors even when they can't be parsed
+
+### Fixed
+
+- Addresses [#709](https://github.com/TeamCodeStream/CodeStream/issues/709) &mdash; Multi-line PR comments only showing last 4 lines
+- Fixes an issue with domain-based joining not working when signing up via GitHub, GitLab or Bitbucket
+- Fixes an issue where the activity feed is automatically scrolled to the first error
+- Fixes an issue where closing the inline Entities menu in the Observability section collapses the node
+- Fixes an issue where deleting a comment in an error via the editor gutter doesn't take effect without a reload
+- Fixes a windows-specific file path issue when parsing a stack trace
+
+## [12.0.2] - 2021-10-28
+
+### Changed
+
+- Modification to the script to grab unique pods for the Pixie dynamic logging
+- Add entity and account info to error groups without stack traces
+- Suppress "Copy Link" in ellipses menu if error group is still pending
+- Adds a "Learn More" link to the disconnected state of the Observability section
+- Use timestamp from payload to better query New Relic Metrics
+
+### Fixed
+
+- Fixes an issue with an error group reloading after adding a comment
+- Fixes an issue with not being able to select a Slack channel for sharing
+- Fixes an issue with the "Try using a different email address" link not working when you sign up via a code host
+
+## [12.0.1] - 2021-10-21
+
+### Fixed
+
+- Fixes an issue that prevented you from signing up with a webmail address
+- Fixes an issue that allowed you to share a pending error to Slack/MS Teams
+
+## [12.0.0] - 2021-10-21
+
+### Added
+
+- Adds an [integration with New Relic One](https://codestream.com/blog/codestream-12-0-new-relic-one-integration-brings-observability-to-all-developers-in-their-ides) that allows you to discover, investigate and collaborate on errors from your IDE, as well as dynamic logging in production using Pixie and the ability to instrument your projects right from your IDE
+
+## [11.1.1] - 2021-10-7
+
+### Fixed
+
+- Fixes an issue where some users couldn't switch to certain organizations
+- Fixes an issue with team name instead of organization name being displayed in the IDE status bar
+
+## [11.1.0] - 2021-10-7
+
+### Added
+
+- Adds support for allowing people to join your CodeStream organization when signing up with specific email domains
+- Adds the ability to filter the Activity Feed to just discussions about repos open in your IDE, or even specific folders (i.e. monorepo scenarios)
+
+### Changed
+
+- Eliminates the concept of a team on CodeStream, with everyone from a company now being in a single CodeStream organization
+- Replaces the My Team section of the sidebar with a My Organization menu at the top of the CodeStream pane
+- Eliminates invitation codes, with teammates now accepting invitations simply by signing up with the email address the invitation was sent to
+
+## [11.0.16] - 2021-9-24
+
+### Fixed
+
+- Fixes an issue with CodeStream overriding GitLab defaults for "Squash commits" and "Delete source branch"
+
+## [11.0.15] - 2021-9-15
+
+### Fixed
+
+- Addresses [#701](https://github.com/TeamCodeStream/CodeStream/issues/701) &mdash; Failed to load MR list from Gitlab.com
+- Fixes an issue with returning users not being able to accept updated TOS
+
 ## [11.0.14] - 2021-8-26
 
 ### Changed

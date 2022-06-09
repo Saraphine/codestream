@@ -5,6 +5,7 @@ import {
 	CSChannelStream,
 	CSDirectStream,
 	CSFileStream,
+	CSObjectStream,
 	CSStream,
 	StreamType
 } from "./api.protocol";
@@ -49,14 +50,14 @@ export const CreateDirectStreamRequestType = new RequestType<
 >("codestream/streams/createDirect");
 
 export interface FetchStreamsRequest {
-	types?: (StreamType.Channel | StreamType.Direct)[];
+	types?: (StreamType.Channel | StreamType.Direct | StreamType.Object)[];
 	streamIds?: string[];
 	// Will return only streams with the matching set of memberIds
 	memberIds?: string[];
 }
 
 export interface FetchStreamsResponse {
-	streams: (CSChannelStream | CSDirectStream)[];
+	streams: (CSChannelStream | CSDirectStream | CSObjectStream)[];
 }
 
 export const FetchStreamsRequestType = new RequestType<
@@ -219,7 +220,7 @@ export interface MuteStreamRequest {
 }
 
 export interface MuteStreamResponse {
-	stream: CSChannelStream | CSDirectStream;
+	stream: CSChannelStream | CSDirectStream | CSObjectStream;
 }
 
 export const MuteStreamRequestType = new RequestType<
@@ -266,7 +267,7 @@ export interface SetStreamPurposeRequest {
 }
 
 export interface SetStreamPurposeResponse {
-	stream: CSChannelStream | CSDirectStream;
+	stream: CSChannelStream | CSDirectStream | CSObjectStream;
 }
 
 export const SetStreamPurposeRequestType = new RequestType<

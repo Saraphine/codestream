@@ -1,6 +1,6 @@
 "use strict";
 
-import { ParsedDiff, structuredPatch } from "diff";
+import { createPatch, ParsedDiff, parsePatch } from "diff";
 import { decompressFromBase64 } from "lz-string";
 import * as path from "path";
 import { Range, TextDocumentIdentifier } from "vscode-languageserver";
@@ -177,6 +177,9 @@ class DefaultMarkersBuilder extends MarkersBuilder {
 		if (this.source?.revision == null) {
 			return this.getLocationInfoWithoutRevision();
 		}
+		if (this.source?.fixedGitSha) {
+			return this.getLocationInfoWithFixedSha();
+		}
 		return this.getLocationInfoCore();
 	}
 
@@ -195,14 +198,14 @@ class DefaultMarkersBuilder extends MarkersBuilder {
 		if (repoHead == null) throw new Error(`Cannot determine HEAD revision for ${repoPath}`);
 
 		const fileContents = await this.getFileContents();
-		const diff = structuredPatch(
-			this.getFilePath(repoPath),
+		const patch = createPatch(
 			this.getFilePath(repoPath),
 			Strings.normalizeFileContents(""),
 			Strings.normalizeFileContents(fileContents),
 			"",
 			""
 		);
+		const diff = parsePatch(patch)[0];
 
 		return {
 			referenceLocations: [
@@ -218,6 +221,23 @@ class DefaultMarkersBuilder extends MarkersBuilder {
 				}
 			],
 			fileCurrentCommitSha: repoHead
+		};
+	}
+
+	protected async getLocationInfoWithFixedSha(): Promise<{
+		referenceLocations: CSReferenceLocation[];
+		fileCurrentCommitSha: string;
+	}> {
+		const location: CSReferenceLocation = {
+			commitHash: this.source!.revision,
+			location: MarkerLocation.toArray(this.location),
+			flags: {
+				canonical: true
+			}
+		};
+		return {
+			referenceLocations: [location],
+			fileCurrentCommitSha: this.source!.revision
 		};
 	}
 

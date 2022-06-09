@@ -31,6 +31,7 @@ SOFTWARE.
 import { createHash, HexBase64Latin1Encoding } from "crypto";
 import * as path from "path";
 import { CSReviewCheckpoint } from "@codestream/protocols/api";
+import { Uri } from "vscode";
 
 export namespace Strings {
 	export const enum CharCode {
@@ -373,6 +374,19 @@ export namespace Strings {
 			repoId,
 			version,
 			path
+		};
+	}
+
+	export function parseGitUrl(uri: Uri): { path: string; sha: string } {
+		const params = JSON.parse(uri.query);
+		const { sha } = params;
+		if (!sha) {
+			throw new Error(`Git URI ${uri} does not contain a sha property in the query`);
+		}
+
+		return {
+			path: uri.fsPath,
+			sha
 		};
 	}
 }

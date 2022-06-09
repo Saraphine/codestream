@@ -2,31 +2,24 @@ import { action } from "../common";
 import { ProvidersState, ProvidersActionsType } from "./types";
 import { HostApi } from "../../webview-api";
 import {
-	ConnectThirdPartyProviderRequestType,
-	ConfigureThirdPartyProviderRequestType,
 	AddEnterpriseProviderRequestType,
+	ConfigureThirdPartyProviderRequestType,
+	ConnectThirdPartyProviderRequestType,
 	DisconnectThirdPartyProviderRequestType,
 	RemoveEnterpriseProviderRequestType,
-	TelemetryRequestType
+	TelemetryRequestType,
+	ProviderConfigurationData
 } from "@codestream/protocols/agent";
+import { getUserProviderInfo } from "@codestream/webview/store/providers/utils";
 import {
 	ConnectToIDEProviderRequestType,
 	DisconnectFromIDEProviderRequestType
 } from "../../ipc/host.protocol";
-import { CSMe } from "@codestream/protocols/api";
 import { logError } from "../../logger";
 import { setIssueProvider, openPanel } from "../context/actions";
 import { deleteForProvider } from "../activeIntegrations/actions";
 
 export const reset = () => action("RESET");
-
-export const getUserProviderInfo = (user: CSMe, provider: string, teamId: string) => {
-	const providerInfo = user.providerInfo || {};
-	const userProviderInfo = providerInfo[provider];
-	const teamProviderInfo = providerInfo[teamId] && providerInfo[teamId][provider];
-	if (userProviderInfo && userProviderInfo.accessToken) return userProviderInfo;
-	else return teamProviderInfo;
-};
 
 export const updateProviders = (data: ProvidersState) => action(ProvidersActionsType.Update, data);
 
@@ -35,15 +28,25 @@ export const configureAndConnectProvider = (
 	connectionLocation: ViewLocation,
 	force?: boolean
 ) => async (dispatch, getState) => {
-	const { providers, configs } = getState();
+	const { providers, configs, ide, capabilities } = getState();
 	const provider = providers[providerId];
-	const { forEnterprise, isEnterprise, name, needsConfigure, needsConfigureForOnPrem } = provider;
+	const {
+		forEnterprise,
+		isEnterprise,
+		name,
+		needsConfigure,
+		needsConfigureForOnPrem,
+		supportsOAuthOrPAT
+	} = provider;
 	const onprem = configs.isOnPrem;
+	const isVSCGitHub = ide.name === "VSC" && name === "github" && capabilities.vsCodeGithubSignin;
 	connectionLocation = connectionLocation || "Integrations Panel";
-	if (needsConfigure || (onprem && needsConfigureForOnPrem)) {
+	if (name !== "jiraserver" && (needsConfigure || (onprem && needsConfigureForOnPrem))) {
 		dispatch(openPanel(`configure-provider-${provider.name}-${provider.id}-${connectionLocation}`));
-	} else if ((forEnterprise || isEnterprise) && name !== "jiraserver") {
+	} else if (forEnterprise || isEnterprise) {
 		dispatch(openPanel(`configure-enterprise-${name}-${provider.id}-${connectionLocation}`));
+	} else if (supportsOAuthOrPAT && !isVSCGitHub) {
+		dispatch(openPanel(`oauthpat-provider-${provider.name}-${provider.id}-${connectionLocation}`));
 	} else {
 		dispatch(connectProvider(provider.id, connectionLocation, force));
 	}
@@ -51,7 +54,7 @@ export const configureAndConnectProvider = (
 
 export const connectProvider = (
 	providerId: string,
-	connectionLocation: ViewLocation,
+	connectionLocation: ViewLocation | string,
 	force?: boolean
 ) => async (dispatch, getState) => {
 	const { context, users, session, providers, ide, capabilities } = getState();
@@ -67,7 +70,7 @@ export const connectProvider = (
 		if (provider.hasIssues) {
 			dispatch(setIssueProvider(providerId));
 		}
-		return { alreadyConnected: true };
+		return;
 	}
 	try {
 		const api = HostApi.instance;
@@ -76,12 +79,11 @@ export const connectProvider = (
 			dispatch(
 				configureProvider(
 					providerId,
-					{ token: result.accessToken, data: { sessionId: result.sessionId } },
-					true,
-					connectionLocation
+					{ accessToken: result.accessToken, data: { sessionId: result.sessionId } },
+					{ setConnectedWhenConfigured: true, connectionLocation }
 				)
 			);
-			return {};
+			return;
 		} else {
 			await api.send(ConnectThirdPartyProviderRequestType, { providerId });
 		}
@@ -91,12 +93,14 @@ export const connectProvider = (
 		if (provider.hasIssues) {
 			dispatch(sendIssueProviderConnected(providerId, connectionLocation));
 			dispatch(setIssueProvider(providerId));
-			return {};
+			return;
 		}
 	} catch (error) {
-		logError(`Failed to connect ${provider.name}: ${error}`);
+		const message = error instanceof Error ? error.message : JSON.stringify(error);
+		logError(`Failed to connect ${provider.name}: ${message}`, {
+			error: error
+		});
 	}
-	return {};
 };
 
 export type ViewLocation =
@@ -110,11 +114,15 @@ export type ViewLocation =
 	| "Issues Section"
 	| "Provider Error Banner"
 	| "Onboard"
-	| "PRs Section";
+	| "PRs Section"
+	| "Open in IDE Flow"
+	| "Open in IDE Pixie"
+	| "Observability Section"
+	| "Pixie Logging";
 
 export const sendIssueProviderConnected = (
 	providerId: string,
-	connectionLocation: ViewLocation = "Compose Modal"
+	connectionLocation: ViewLocation | string = "Compose Modal"
 ) => async (dispatch, getState) => {
 	const { providers } = getState();
 	const provider = providers[providerId];
@@ -122,7 +130,7 @@ export const sendIssueProviderConnected = (
 	const { name, host, isEnterprise } = provider;
 	const api = HostApi.instance;
 	api.send(TelemetryRequestType, {
-		eventName: "Issue Service Connected",
+		eventName: "Service Connected",
 		properties: {
 			Service: name,
 			Host: isEnterprise ? host : null,
@@ -133,14 +141,14 @@ export const sendIssueProviderConnected = (
 
 export const sendMessagingServiceConnected = (
 	providerId: string,
-	connectionLocation: ViewLocation = "Onboard"
+	connectionLocation: string | ViewLocation = "Onboard"
 ) => async (dispatch, getState) => {
 	const { providers } = getState();
 	const provider = providers[providerId];
 	if (!provider) return;
 
 	HostApi.instance.send(TelemetryRequestType, {
-		eventName: "Messaging Service Connected",
+		eventName: "Service Connected",
 		properties: {
 			Service: provider.name,
 			"Connection Location": connectionLocation
@@ -148,24 +156,25 @@ export const sendMessagingServiceConnected = (
 	});
 };
 
+export interface ConfigureProviderOptions {
+	setConnectedWhenConfigured?: boolean;
+	connectionLocation?: ViewLocation | string;
+	throwOnError?: boolean;
+	verify?: boolean;
+}
+
 export const configureProvider = (
 	providerId: string,
-	data: { [key: string]: any },
-	setConnectedWhenConfigured = false,
-	connectionLocation?: ViewLocation
+	data: ProviderConfigurationData,
+	options: ConfigureProviderOptions = {}
 ) => async (dispatch, getState) => {
+	const { setConnectedWhenConfigured, connectionLocation, throwOnError, verify } = options;
 	const { providers } = getState();
 	const provider = providers[providerId];
 	if (!provider) return;
 	try {
 		const api = HostApi.instance;
-		await api.send(ConfigureThirdPartyProviderRequestType, { providerId, data });
-		api.send(TelemetryRequestType, {
-			eventName: "Issue Service Configured",
-			properties: {
-				Service: provider.name
-			}
-		});
+		await api.send(ConfigureThirdPartyProviderRequestType, { providerId, data, verify });
 
 		// for some providers (YouTrack and enterprise providers with PATs), configuring is as good as connecting,
 		// since we allow the user to set their own access token
@@ -174,7 +183,13 @@ export const configureProvider = (
 			dispatch(setIssueProvider(providerId));
 		}
 	} catch (error) {
-		logError(`Failed to connect ${provider.name}: ${error}`);
+		const message = error instanceof Error ? error.message : JSON.stringify(error);
+		logError(`Failed to connect ${provider.name}: ${message}`, {
+			error: error
+		});
+		if (throwOnError) {
+			throw error;
+		}
 	}
 };
 
@@ -189,12 +204,7 @@ export const addEnterpriseProvider = (
 	try {
 		const api = HostApi.instance;
 		const response = await api.send(AddEnterpriseProviderRequestType, { providerId, host, data });
-		api.send(TelemetryRequestType, {
-			eventName: "Issue Service Configured",
-			properties: {
-				Service: provider.name
-			}
-		});
+
 		return response.providerId;
 	} catch (error) {
 		logError(`Failed to add enterprise provider for ${provider.name}: ${error}`);
@@ -217,11 +227,11 @@ export const removeEnterpriseProvider = (providerId: string) => async (dispatch,
 
 export const disconnectProvider = (
 	providerId: string,
-	connectionLocation: ViewLocation,
+	connectionLocation: ViewLocation | string,
 	providerTeamId?: string
 ) => async (dispatch, getState) => {
 	try {
-		const { context, providers, users, session, ide } = getState();
+		const { context, providers, ide } = getState();
 		const provider = providers[providerId];
 		if (!provider) return;
 		const api = HostApi.instance;
@@ -230,7 +240,7 @@ export const disconnectProvider = (
 			await api.send(DisconnectFromIDEProviderRequestType, { provider: provider.name });
 		}
 		dispatch(deleteForProvider(providerId, providerTeamId));
-		if (getState().context.issueProvider === provider.host) {
+		if (context.issueProvider === providerId) {
 			dispatch(setIssueProvider(undefined));
 		}
 	} catch (error) {

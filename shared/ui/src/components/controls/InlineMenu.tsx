@@ -1,15 +1,24 @@
-import React from "react";
+import React, { SyntheticEvent } from "react";
 import Menu from "../../../Stream/Menu";
 import styled from "styled-components";
 import Icon from "../../../Stream/Icon";
 
-interface MenuItem {
+export interface MenuItem {
 	label: any;
 	action?: string | (() => void);
 	key?: string;
 	default?: boolean;
 	checked?: boolean;
 	subtle?: string;
+	type?: string;
+	subtext?: string;
+	subtextNoPadding?: string;
+	placeholder?: string;
+	floatRight?: any;
+	icon?: any;
+	noHover?: boolean;
+	disabled?: boolean;
+	searchLabel?: string;
 }
 
 export interface InlineMenuProps {
@@ -24,6 +33,12 @@ export interface InlineMenuProps {
 	noChevronDown?: boolean;
 	noFocusOnSelect?: boolean;
 	align?: string;
+	/** if true, still renders the surrounding TextButton UI  */
+	allowEmpty?: boolean;
+	/** if true, prevents e.stopPropagation() from being called onclick */
+	preventStopPropagation?: boolean;
+	onChevronClick?: Function;
+	preventMenuStopPropagation?: boolean;
 }
 
 export const TextButton = styled.span`
@@ -74,13 +89,16 @@ export function InlineMenu(props: InlineMenuProps) {
 	};
 
 	const maybeToggleMenu = action => {
+		if (action?.stopPropagation && props.preventMenuStopPropagation) {
+			action.stopPropagation();
+		}
 		if (action !== "noop") {
 			toggleMenu(action);
 		}
 		if (props.onChange) props.onChange(action);
 	};
 
-	if (!props.items.length) {
+	if (!props.items.length && !props.allowEmpty) {
 		return <>{props.children}</>;
 	}
 
@@ -89,6 +107,7 @@ export function InlineMenu(props: InlineMenuProps) {
 			{isOpen && buttonRef.current && (
 				<Menu
 					align={props.align || "center"}
+					preventMenuStopPropagation={props.preventMenuStopPropagation}
 					action={maybeToggleMenu}
 					title={props.title}
 					titleIcon={props.titleIcon}
@@ -102,9 +121,13 @@ export function InlineMenu(props: InlineMenuProps) {
 				ref={buttonRef}
 				onClickCapture={e => {
 					e.preventDefault();
-					e.stopPropagation();
-					if (!isOpen && props.onOpen) props.onOpen();
-					toggleMenu(isOpen);
+					if (props.preventStopPropagation) {
+						// noop
+					} else {
+						e.stopPropagation();
+						if (!isOpen && props.onOpen) props.onOpen();
+						toggleMenu(isOpen);
+					}
 				}}
 				tabIndex={0}
 				onKeyPress={handleKeyPress}
@@ -114,7 +137,10 @@ export function InlineMenu(props: InlineMenuProps) {
 				{!props.noChevronDown && (
 					<span style={{ whiteSpace: "nowrap" }}>
 						&#65279;
-						<Icon name="chevron-down" />
+						<Icon
+							name="chevron-down-thin"
+							onClick={e => (props.onChevronClick ? props.onChevronClick(e) : undefined)}
+						/>
 					</span>
 				)}
 			</TextButton>

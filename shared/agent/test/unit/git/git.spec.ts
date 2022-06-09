@@ -1,46 +1,146 @@
+"use strict";
+
 import { expect } from "chai";
 import { GitRemoteParser } from "../../../src/git/parsers/remoteParser";
-import { describe, it } from "mocha";
+require("mocha").describe;
+require("mocha").it;
 
-describe("git.spec.ts", () => {
-	describe("GitRemoteParser", () => {
-		/*
-		// need a .ssh/config with the following
-
-		Host beer.github.com
-		HostName github.com
-		User brian
-		IdentityFile ~/.ssh/id_rsa
-
-		Host sub.gitlab.com
-		HostName gitlab.com
-		User brian
-		IdentityFile ~/.ssh/id_rsa
-
-		*/
-		// it("can match on an ssh github remote", async function() {
-		// 	const data = `origin  git@beer.github.com:TeamCodeStream/codestream.git (fetch)
-		// 	origin  git@beer.github.com:TeamCodeStream/codestream.git (push)`;
-		// 	const parsed = await GitRemoteParser.parse(data, "c:\\users\\anything");
-		// 	expect(parsed[0].domain).to.equal("github.com");
-		// });
-		// it("can match on an ssh gitlab remote", async function() {
-		// 	const data = `origin  git@sub.gitlab.com:TeamCodeStream/codestream/codestream-vs.git (fetch)
-		// 	origin  git@sub.gitlab.com:TeamCodeStream/codestream/codestream-vs.git (push)`;
-		// 	const parsed = await GitRemoteParser.parse(data, "c:\\users\\anything");
-		// 	console.log(parsed);
-		// 	expect(parsed[0].domain).to.equal("gitlab.com");
-		// 	expect(parsed[0].normalizedUrl).to.equal(
-		// 		"gitlab.com/teamcodestream/codestream/codestream-vs"
-		// 	);
-		// });
-		// it("can match on an http github remote", async function() {
-		// 	const data =
-		// 		"origin\thttps://github.com/TeamCodeStream/codestream (fetch)\norigin\thttps://github.com/TeamCodeStream/codestream (push)\n";
-		// 	const parsed = await GitRemoteParser.parse(data, "c:\\users\\anything");
-		// 	console.log(parsed);
-		// 	expect(parsed[0].domain).to.equal("github.com");
-		// 	expect(parsed[0].normalizedUrl).to.equal("github.com/teamcodestream/codestream");
-		// });
+describe("git", () => {
+	describe("getRepoRemoteVariants", () => {
+		it("ssh0", async () => {
+			const results = await GitRemoteParser.getRepoRemoteVariants(
+				"git@gitlabratory.example.com:myorg/myrepo-sample-java.git"
+			);
+			expect(results).to.deep.equal([
+				{
+					type: "ssh",
+					value: "git@gitlabratory.example.com:myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "ssh",
+					value: "ssh://git@gitlabratory.example.com:myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "https",
+					value: "https://gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "https",
+					value: "https://gitlabratory.example.com/myorg/myrepo-sample-java"
+				},
+				{
+					type: "git",
+					value: "git://gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				}
+			]);
+		});
+		it("ssh1", async () => {
+			const results = await GitRemoteParser.getRepoRemoteVariants(
+				"ssh://git@gitlabratory.example.com/myorg/myrepo-sample-java.git"
+			);
+			expect(results).to.deep.equal([
+				{
+					type: "ssh",
+					value: "git@gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "ssh",
+					value: "ssh://git@gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "https",
+					value: "https:///.git"
+				},
+				{
+					type: "https",
+					value: "https:///"
+				},
+				{
+					type: "git",
+					value: "git:///.git"
+				}
+			]);
+		});
+		it("ssh2", async () => {
+			const results = await GitRemoteParser.getRepoRemoteVariants(
+				"ssh://git@gitlabratory.example.com:myorg/myrepo-sample-java.git"
+			);
+			expect(results).to.deep.equal([
+				{
+					type: "ssh",
+					value: "git@gitlabratory.example.com:myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "ssh",
+					value: "ssh://git@gitlabratory.example.com:myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "https",
+					value: "https://gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "https",
+					value: "https://gitlabratory.example.com/myorg/myrepo-sample-java"
+				},
+				{
+					type: "git",
+					value: "git://gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				}
+			]);
+		});
+		it("ssh3", async () => {
+			const results = await GitRemoteParser.getRepoRemoteVariants(
+				"git@github.com:theuser/therepo.git"
+			);
+			expect(results).to.deep.equal([
+				{
+					type: "ssh",
+					value: "git@github.com:theuser/therepo.git"
+				},
+				{
+					type: "ssh",
+					value: "ssh://git@github.com:theuser/therepo.git"
+				},
+				{
+					type: "https",
+					value: "https://github.com/theuser/therepo.git"
+				},
+				{
+					type: "https",
+					value: "https://github.com/theuser/therepo"
+				},
+				{
+					type: "git",
+					value: "git://github.com/theuser/therepo.git"
+				}
+			]);
+		});
+		it("https", async () => {
+			const results = await GitRemoteParser.getRepoRemoteVariants(
+				"https://gitlabratory.example.com/myorg/myrepo-sample-java.git"
+			);
+			expect(results).to.deep.equal([
+				{
+					type: "https",
+					value: "https://gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "https",
+					value: "https://gitlabratory.example.com/myorg/myrepo-sample-java"
+				},
+				{
+					type: "git",
+					value: "git://gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "ssh",
+					value: "git@gitlabratory.example.com:myorg/myrepo-sample-java.git"
+				},
+				{
+					type: "ssh",
+					value: "ssh://git@gitlabratory.example.com/myorg/myrepo-sample-java.git"
+				}
+			]);
+		});
 	});
 });

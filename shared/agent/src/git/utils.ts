@@ -169,5 +169,7 @@ export function getLineNumber(diff: ParsedDiffWithMetadata, position: number): n
  * @return {string} foo in `foo.git`
  */
 export function toRepoName(name: string) {
-	return name != null && name.toLowerCase().endsWith(".git") ? name.substr(0, name.length - 4) : name;
+	return name != null && name.toLowerCase().endsWith(".git")
+		? name.substr(0, name.length - 4)
+		: name;
 }

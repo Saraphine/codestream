@@ -5,22 +5,22 @@ import com.intellij.ui.EnumComboBoxModel;
 
 import javax.swing.*;
 
-import static com.codestream.settings.ApplicationSettingsServiceKt.API_PROD;
-
 public class CodeStreamConfigurableGUI {
     private JPanel rootPanel;
     private JCheckBox autoSignIn;
     private JTextField serverUrl;
     private JCheckBox disableStrictSSL;
+    private JTextField extraCerts;
     private JCheckBox showAvatars;
-    private JTextField team;
     private JCheckBox showFeedbackSmiley;
     private JCheckBox autoHideMarkers;
     private JCheckBox showMarkers;
-    private JComboBox proxySupport;
+    private JComboBox<ProxySupport> proxySupport;
     private JCheckBox proxyStrictSSL;
     private JCheckBox jcef;
     private JCheckBox showNewCodemarkGutterIconOnHover;
+    private JCheckBox showGoldenSignalsInEditor;
+    private JTextField goldenSignalsInEditorFormat;
 
     public JPanel getRootPanel() {
         return rootPanel;
@@ -40,10 +40,6 @@ public class CodeStreamConfigurableGUI {
 
     public JCheckBox getShowAvatars() {
         return showAvatars;
-    }
-
-    public JTextField getTeam() {
-        return team;
     }
 
     public JCheckBox getShowFeedbackSmiley() {
@@ -70,8 +66,20 @@ public class CodeStreamConfigurableGUI {
         return proxyStrictSSL;
     }
 
+    public JTextField getExtraCerts() {
+        return extraCerts;
+    }
+
     public JCheckBox getJcef() {
         return jcef;
+    }
+
+    public JCheckBox getShowGoldenSignalsInEditor() {
+        return showGoldenSignalsInEditor;
+    }
+
+    public JTextField getGoldenSignalsInEditorFormat() {
+        return goldenSignalsInEditorFormat;
     }
 
     private void createUIComponents() {

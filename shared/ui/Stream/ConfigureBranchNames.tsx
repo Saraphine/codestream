@@ -66,7 +66,7 @@ export const ConfigureBranchNames = (props: { onClose: Function }) => {
 	return (
 		<Root>
 			<Dialog onClose={() => props.onClose()}>
-				<form className="standard-form">
+				<div className="standard-form">
 					<fieldset className="form-body">
 						<div id="controls">
 							<h3 style={{ margin: "0 0 5px 0" }}>Branch Name Template:</h3>
@@ -119,12 +119,12 @@ export const ConfigureBranchNames = (props: { onClose: Function }) => {
 									fontSize: "smaller"
 								}}
 							>
-								This is a team setting.
+								This is an organization setting.
 							</div>
 							<Button onClick={save}>Save Branch Template</Button>
 						</ButtonRow>
 					</fieldset>
-				</form>
+				</div>
 			</Dialog>
 		</Root>
 	);

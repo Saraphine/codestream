@@ -61,7 +61,8 @@ const getLineHeight = (size?: ButtonSize, variant?: ButtonVariant) => {
 	}
 };
 
-const getColors = (variant = "primary", fullOpacity = false) => {
+const getColors = (variant = "primary", fullOpacity = false, isDone = false) => {
+	if (isDone) variant = "success";
 	switch (variant) {
 		case "text": {
 			return `
@@ -136,6 +137,16 @@ const getColors = (variant = "primary", fullOpacity = false) => {
 				}
 			`}`;
 		}
+		case "new-relic": {
+			return `
+				background-color: #008996;
+				color: white;
+				${!fullOpacity &&
+					`:hover {
+						background-color: #1dcad3;
+					}
+			`}`;
+		}
 		case "primary":
 		default: {
 			return `
@@ -153,11 +164,11 @@ const getColors = (variant = "primary", fullOpacity = false) => {
 export const ButtonRoot = styled.button<ButtonProps>(props => {
 	return `
 	width: ${props.fillParent ? "100%" : "max-content"};
-	${getColors(props.variant, props.fullOpacity)}
-	cursor: ${props.isLoading || props.disabled ? "default" : "pointer"};
+	${getColors(props.variant, props.fullOpacity, props.isDone)}
+	cursor: ${props.isLoading || props.disabled || props.isDone ? "default" : "pointer"};
 	display: inline-flex;
 	align-items: center;
-	justify-content: center ${props.isLoading ? "!important" : ""};
+	justify-content: center ${props.isLoading || props.isDone ? "!important" : ""};
 	line-height: ${props.variant == "text" ? "2em" : "inherit"};
 	user-select: none;
 	-webkit-user-select: none;
@@ -202,13 +213,15 @@ export type ButtonVariant =
 	| "warning"
 	| "text"
 	| "merged"
-	| "neutral";
+	| "neutral"
+	| "new-relic";
 
 export interface ButtonProps extends PropsWithChildren<{}> {
 	variant?: ButtonVariant;
 	disabled?: boolean;
 	fullOpacity?: boolean;
 	isLoading?: boolean;
+	isDone?: boolean;
 	size?: ButtonSize;
 	prependIcon?: React.ReactNode;
 	appendIcon?: React.ReactNode;
@@ -217,6 +230,7 @@ export interface ButtonProps extends PropsWithChildren<{}> {
 	className?: string;
 	tabIndex?: number;
 	narrow?: boolean;
+	style?: any;
 }
 
 export function getButtonProps<P extends ButtonProps>(props: P): ButtonProps {
@@ -225,6 +239,7 @@ export function getButtonProps<P extends ButtonProps>(props: P): ButtonProps {
 		disabled: props.disabled,
 		fullOpacity: props.fullOpacity,
 		isLoading: props.isLoading,
+		isDone: props.isDone,
 		size: props.size,
 		prependIcon: props.prependIcon,
 		appendIcon: props.appendIcon,
@@ -248,7 +263,7 @@ export const Button = React.forwardRef((props: ButtonProps, ref?: React.Ref<any>
 	return (
 		<ButtonRoot
 			{...rest}
-			onClick={props.isLoading || props.disabled ? undefined : onClick}
+			onClick={props.isLoading || props.disabled || props.isDone ? undefined : onClick}
 			className={props.className}
 			ref={ref}
 		>
@@ -258,6 +273,11 @@ export const Button = React.forwardRef((props: ButtonProps, ref?: React.Ref<any>
 					<div style={{ position: "absolute" }}>
 						<Icon name="sync" className="spin" />
 					</div>
+				</>
+			) : props.isDone ? (
+				<>
+					<div style={{ opacity: 0, display: "flex" }}>{internals}</div>
+					<div style={{ position: "absolute" }}>✔</div>
 				</>
 			) : (
 				internals

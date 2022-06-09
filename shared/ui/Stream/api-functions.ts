@@ -25,6 +25,18 @@ export async function getDocumentFromMarker(markerId: string, source?: string) {
 
 export async function highlightRange(request: EditorHighlightRangeRequest) {
 	try {
+		if (
+			request?.range?.start?.character == null ||
+			(request?.range?.start && isNaN(request.range.start.character))
+		) {
+			request.range.start.character = 0;
+		}
+		if (
+			request?.range?.end?.character == null ||
+			(request?.range?.end && isNaN(request.range.end.character))
+		) {
+			request.range.end.character = 0;
+		}
 		const { success } = await HostApi.instance.send(EditorHighlightRangeRequestType, request);
 		return success;
 	} catch (error) {

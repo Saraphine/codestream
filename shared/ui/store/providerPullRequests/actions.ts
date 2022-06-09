@@ -25,6 +25,7 @@ import {
 	setCurrentReview
 } from "../context/actions";
 import { getPullRequestExactId, isAnHourOld } from "./reducer";
+import { getPRLabelForProvider } from "../providers/reducer";
 
 export const reset = () => action("RESET");
 
@@ -47,6 +48,13 @@ export const updatePullRequestTitle = (providerId: string, id: string, pullReque
 		providerId,
 		id,
 		pullRequestData
+	});
+
+export const _updatePullRequestFilter = (providerId: string, data: any, index: any) =>
+	action(ProviderPullRequestActionsTypes.UpdatePullRequestFilter, {
+		providerId,
+		data,
+		index
 	});
 
 export const _addPullRequestFiles = (
@@ -168,7 +176,7 @@ export const getPullRequestConversationsFromProvider = (
 
 		return responses.conversations as FetchThirdPartyPullRequestResponse;
 	} catch (error) {
-		logError(`failed to refresh pullRequest: ${error}`, { providerId, id });
+		logError(`failed to refresh pullRequest: ${error?.message}`, { providerId, id });
 	}
 	return undefined;
 };
@@ -296,7 +304,8 @@ export const getMyPullRequests = (
 	openReposOnly: boolean,
 	options?: { force?: boolean },
 	throwOnError?: boolean,
-	test?: boolean
+	test?: boolean,
+	index?: Number
 ) => async (dispatch, getState: () => CodeStreamState) => {
 	try {
 		let force = false;
@@ -326,7 +335,9 @@ export const getMyPullRequests = (
 				force: force || (options && options.force)
 			}
 		});
-		if (!test) dispatch(_addMyPullRequests(providerId, response));
+		if (index !== undefined) {
+			dispatch(_updatePullRequestFilter(providerId, response, index));
+		} else if (!test) dispatch(_addMyPullRequests(providerId, response));
 
 		return response;
 	} catch (error) {
@@ -399,8 +410,13 @@ export const openPullRequestByUrl = (
 	options?: {
 		source?: string;
 		checkoutBranch?: any;
+		providerId?: string;
+		groupIndex?: string;
+		isVS?: boolean;
 	}
 ) => async (dispatch, getState: () => CodeStreamState) => {
+	const prLabel = getPRLabelForProvider(options?.providerId || "");
+	const defaultErrorString = `Enter the URL for a specific ${prLabel.pullrequest}`;
 	let handled = false;
 	let response;
 	let providerInfo;
@@ -425,7 +441,9 @@ export const openPullRequestByUrl = (
 						providerInfo.providerId,
 						id as string,
 						"",
-						options ? options.source : undefined
+						options ? options.source : undefined,
+						options?.isVS ? "details" : "sidebar-diffs",
+						options?.groupIndex ? options.groupIndex : undefined
 					)
 				);
 				handled = true;
@@ -442,10 +460,10 @@ export const openPullRequestByUrl = (
 				errorString = errorString.substring(index + targetLength);
 			}
 		}
-		return { error: errorString };
+		return { error: defaultErrorString };
 	}
 	if (!handled) {
-		response = { error: "Unable to view PR" };
+		response = { error: defaultErrorString };
 	}
 	return response;
 };
@@ -505,6 +523,7 @@ export const api = <T = any, R = any>(
 		| "getReviewers"
 		| "lockPullRequest"
 		| "markPullRequestReadyForReview"
+		| "markFileAsViewed"
 		| "markToDoDone"
 		| "mergePullRequest"
 		| "remoteBranches"

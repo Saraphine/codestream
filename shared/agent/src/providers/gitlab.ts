@@ -3,9 +3,8 @@ import { parsePatch } from "diff";
 import { print } from "graphql";
 import { GraphQLClient } from "graphql-request";
 import { merge } from "lodash";
-import { flatten, groupBy } from "lodash-es";
+import { groupBy } from "lodash-es";
 import { Response } from "node-fetch";
-import * as paths from "path";
 import * as qs from "querystring";
 import semver from "semver";
 import * as nodeUrl from "url";
@@ -13,14 +12,14 @@ import { URI } from "vscode-uri";
 import { InternalError, ReportSuppressedMessages } from "../agentError";
 import { Container, SessionContainer } from "../container";
 import { GitRemoteLike } from "../git/models/remote";
-import { GitRepository } from "../git/models/repository";
 import { ParsedDiffWithMetadata, toRepoName, translatePositionToLineNumber } from "../git/utils";
 import { Logger } from "../logger";
 import {
 	CreateThirdPartyCardRequest,
 	DidChangePullRequestCommentsNotificationType,
 	DiscussionNode,
-	DocumentMarker,
+	FetchAssignableUsersAutocompleteRequest,
+	FetchAssignableUsersResponse,
 	FetchThirdPartyBoardsRequest,
 	FetchThirdPartyBoardsResponse,
 	FetchThirdPartyCardsRequest,
@@ -41,6 +40,9 @@ import {
 	MoveThirdPartyCardRequest,
 	MoveThirdPartyCardResponse,
 	Note,
+	ProviderConfigurationData,
+	ProviderGetForkedReposResponse,
+	ThirdPartyDisconnect,
 	ThirdPartyProviderConfig
 } from "../protocol/agent.protocol";
 import { CSGitLabProviderInfo } from "../protocol/api.protocol";
@@ -58,11 +60,9 @@ import {
 	getRemotePaths,
 	ProviderCreatePullRequestRequest,
 	ProviderCreatePullRequestResponse,
-	ProviderGetForkedReposResponse,
 	ProviderGetRepoInfoResponse,
 	ProviderVersion,
 	PullRequestComment,
-	REFRESH_TIMEOUT,
 	ThirdPartyIssueProviderBase,
 	ThirdPartyProviderSupportsIssues
 } from "./provider";
@@ -94,6 +94,12 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 	implements ThirdPartyProviderSupportsIssues {
 	/** version used when a query to get the version fails */
 	private static defaultUnknownVersion = "0.0.0";
+	protected LOWEST_SUPPORTED_VERSION = {
+		version: "13.6.4",
+		asArray: [13, 6, 4],
+		isDefault: false,
+		isLowestSupportedVersion: true
+	};
 
 	private _projectsByRemotePath = new Map<string, GitLabProject>();
 	private _assignableUsersCache = new Map<string, any>();
@@ -137,6 +143,14 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 		await this.getCurrentUser();
 	}
 
+	canConfigure() {
+		return true;
+	}
+
+	async verifyConnection(config: ProviderConfigurationData): Promise<void> {
+		await this.getCurrentUser();
+	}
+
 	protected getPRExternalContent(comment: PullRequestComment) {
 		return {
 			provider: {
@@ -166,7 +180,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 	}
 
 	async onConnected(providerInfo?: CSGitLabProviderInfo) {
-		super.onConnected(providerInfo);
+		await super.onConnected(providerInfo);
 		this._projectsByRemotePath = new Map<string, GitLabProject>();
 	}
 
@@ -201,7 +215,6 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				}
 			} catch (err) {
 				Logger.error(err);
-				debugger;
 			}
 			boards = gitLabProjects.map(p => {
 				return {
@@ -291,17 +304,24 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 	}
 
 	replaceMe(filter: any, currentUser: GitLabCurrentUser) {
-		if (filter?.assignee_username && filter["assignee_username"] === "@me")
+		if (filter?.assignee_username && filter["assignee_username"] === "@me") {
 			filter["assignee_username"] = currentUser.login;
-		if (filter?.assignee_id && filter["assignee_id"] === "@me")
+		}
+		if (filter?.assignee_id && filter["assignee_id"] === "@me") {
 			filter["assignee_id"] = currentUser.id;
-		if (filter?.author_username && filter["author_username"] === "@me")
+		}
+		if (filter?.author_username && filter["author_username"] === "@me") {
 			filter["author_username"] = currentUser.login;
-		if (filter?.author_id && filter["author_id"] === "@me") filter["author_id"] = currentUser.id;
-		if (filter?.reviewer_username && filter["reviewer_username"] === "@me")
+		}
+		if (filter?.author_id && filter["author_id"] === "@me") {
+			filter["author_id"] = currentUser.id;
+		}
+		if (filter?.reviewer_username && filter["reviewer_username"] === "@me") {
 			filter["reviewer_username"] = currentUser.login;
-		if (filter?.reviewer_id && filter["reviewer_id"] === "@me")
+		}
+		if (filter?.reviewer_id && filter["reviewer_id"] === "@me") {
 			filter["reviewer_id"] = currentUser.id;
+		}
 	}
 
 	@log()
@@ -309,7 +329,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 		await this.ensureConnected();
 		const currentUser = await this.getCurrentUser();
 
-		let filter = request.customFilter
+		const filter = request.customFilter
 			? JSON.parse(JSON.stringify(qs.parse(request.customFilter)))
 			: undefined;
 
@@ -392,25 +412,13 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 		return { users };
 	}
 
-	@log()
-	async getPullRequestDocumentMarkers({
-		uri,
-		repoId,
-		streamId
-	}: {
-		uri: URI;
-		repoId: string | undefined;
-		streamId: string;
-	}): Promise<DocumentMarker[]> {
-		return super.getPullRequestDocumentMarkersCore({ uri, repoId, streamId });
-	}
-
 	private _commentsByRepoAndPath = new Map<
 		string,
 		{ expiresAt: number; comments: Promise<PullRequestComment[]> }
 	>();
 
 	private _isMatchingRemotePredicate = (r: GitRemoteLike) => r.domain === "gitlab.com";
+
 	getIsMatchingRemotePredicate() {
 		return this._isMatchingRemotePredicate;
 	}
@@ -426,7 +434,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 		return remotePaths;
 	}
 
-	protected getOwnerFromRemote(remote: string): { owner: string; name: string } {
+	getOwnerFromRemote(remote: string): { owner: string; name: string } {
 		// HACKitude yeah, sorry
 		const uri = URI.parse(remote);
 		const split = uri.path.split("/");
@@ -516,6 +524,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 		}
 	}
 
+	@log()
 	async getRepoInfo(request: { remote: string }): Promise<ProviderGetRepoInfoResponse> {
 		let owner;
 		let name;
@@ -529,6 +538,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				);
 			} catch (ex) {
 				Logger.error(ex, `${this.displayName}: failed to get projects`, {
+					remote: request.remote,
 					owner: owner,
 					name: name,
 					hasProviderInfo: this._providerInfo != null
@@ -560,37 +570,30 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 			}
 
 			return {
+				owner,
+				name,
+				nameWithOwner: `${owner}/${name}`,
 				id: (projectResponse.body.iid || projectResponse.body.id)!.toString(),
 				defaultBranch: projectResponse.body.default_branch,
+				isFork: projectResponse.body.forked_from_project != null,
 				pullRequests: mergeRequestsResponse.body.map(_ => {
 					return {
 						id: JSON.stringify({ full: _.references.full, id: _.iid.toString() }),
 						iid: _.iid.toString(),
 						url: _.web_url,
 						baseRefName: _.target_branch,
-						headRefName: _.source_branch
+						headRefName: _.source_branch,
+						nameWithOwner: _.references.full.split("!")[0]
 					};
 				})
 			};
 		} catch (ex) {
-			Logger.error(ex, `${this.displayName}: getRepoInfo failed`, {
-				owner: owner,
-				name: name,
-				hasProviderInfo: this._providerInfo != null
-			});
-
-			return {
-				error: {
-					type: "PROVIDER",
-					message: ex.message
-				}
-			};
+			return this.handleProviderError(ex, request);
 		}
 	}
 
 	async getForkedRepos(request: { remote: string }): Promise<ProviderGetForkedReposResponse> {
 		try {
-			const { remote } = request;
 			const { owner, name } = this.getOwnerFromRemote(request.remote);
 
 			const projectResponse = await this.get<GitLabProject>(
@@ -601,10 +604,21 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				: projectResponse.body;
 
 			const branchesByProjectId = new Map<number, GitLabBranch[]>();
+			if (projectResponse.body.forked_from_project) {
+				const branchesResponse = await this.get<GitLabBranch[]>(
+					`/projects/${encodeURIComponent(
+						projectResponse.body.forked_from_project.path_with_namespace
+					)}/repository/branches`
+				);
+				branchesByProjectId.set(projectResponse.body.forked_from_project.id, branchesResponse.body);
+			}
+
 			const branchesResponse = await this.get<GitLabBranch[]>(
-				`/projects/${encodeURIComponent(parentProject.path_with_namespace)}/repository/branches`
+				`/projects/${encodeURIComponent(
+					projectResponse.body.path_with_namespace
+				)}/repository/branches`
 			);
-			branchesByProjectId.set(parentProject.id, branchesResponse.body);
+			branchesByProjectId.set(projectResponse.body.id, branchesResponse.body);
 
 			const forksResponse = await this.get<GitLabProject[]>(
 				`/projects/${encodeURIComponent(parentProject.path_with_namespace)}/forks`
@@ -616,201 +630,40 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				branchesByProjectId.set(project.id, branchesResponse.body);
 			}
 
-			return {
-				parent: {
-					nameWithOwner: parentProject.path_with_namespace,
-					owner: {
-						login: parentProject.namespace.path
-					},
-					id: parentProject.id,
+			const response = {
+				self: {
+					nameWithOwner: projectResponse.body.path_with_namespace,
+					owner: owner,
+					id: projectResponse.body.id,
 					refs: {
-						nodes: branchesByProjectId.get(parentProject.id)!.map(branch => ({ name: branch.name }))
+						nodes: branchesByProjectId
+							.get(projectResponse.body.id)!
+							.map(branch => ({ name: branch.name }))
 					}
 				},
 				forks: forksResponse.body.map(fork => ({
 					nameWithOwner: fork.path_with_namespace,
-					owner: {
-						login: fork.namespace.path
-					},
+					owner: fork.namespace.path,
 					id: fork.id,
 					refs: {
 						nodes: branchesByProjectId.get(fork.id)!.map(branch => ({ name: branch.name }))
 					}
 				}))
-			};
-		} catch (ex) {
-			Logger.error(ex, `${this.providerConfig.id}: getForkedRepos`, {
-				remote: request.remote
-			});
-			let errorMessage =
-				ex.response && ex.response.errors
-					? ex.response.errors[0].message
-					: `Unknown ${this.providerConfig.name} error`;
-			errorMessage = `${this.providerConfig.name}: ${errorMessage}`;
-			return {
-				error: {
-					type: "PROVIDER",
-					message: errorMessage
-				}
-			};
-		}
-	}
-
-	@log()
-	protected async getCommentsForPath(
-		filePath: string,
-		repo: GitRepository
-	): Promise<PullRequestComment[] | undefined> {
-		const cc = Logger.getCorrelationContext();
-
-		try {
-			const relativePath = Strings.normalizePath(paths.relative(repo.path, filePath));
-			const cacheKey = `${repo.path}|${relativePath}`;
-
-			const cachedComments = this._commentsByRepoAndPath.get(cacheKey);
-			if (cachedComments !== undefined && cachedComments.expiresAt > new Date().getTime()) {
-				// NOTE: Keep this await here, so any errors are caught here
-				return await cachedComments.comments;
-			}
-			super.invalidatePullRequestDocumentMarkersCache();
-
-			const remotePaths = await getRemotePaths(
-				repo,
-				this.getIsMatchingRemotePredicate(),
-				this._projectsByRemotePath
-			);
-
-			const commentsPromise: Promise<PullRequestComment[]> =
-				remotePaths != null
-					? this._getCommentsForPathCore(filePath, relativePath, remotePaths)
-					: Promise.resolve([]);
-			this._commentsByRepoAndPath.set(cacheKey, {
-				expiresAt: new Date().setMinutes(new Date().getMinutes() + REFRESH_TIMEOUT),
-				comments: commentsPromise
-			});
-
-			// Since we aren't cached, we want to just kick of the request to get the comments (which will fire a notification)
-			// This could probably be enhanced to wait for the commentsPromise for a short period of time (maybe 1s?) to see if it will complete, to avoid the notification roundtrip for fast requests
-			return undefined;
-		} catch (ex) {
-			Logger.error(ex, cc);
-			return undefined;
-		}
-	}
-
-	private async _getCommentsForPathCore(
-		filePath: string,
-		relativePath: string,
-		remotePaths: string[]
-	): Promise<PullRequestComment[]> {
-		const comments = [];
-
-		for (const remotePath of remotePaths) {
-			const prs = await this._getPullRequests(remotePath);
-
-			const prComments = (
-				await Promise.all(prs.map(pr => this._getPullRequestComments(remotePath, pr, relativePath)))
-			).reduce((group, current) => group.concat(current), []);
-
-			comments.push(...prComments);
-		}
-
-		// If we have any comments, fire a notification
-		if (comments.length !== 0) {
-			void SessionContainer.instance().documentMarkers.fireDidChangeDocumentMarkers(
-				URI.file(filePath).toString(),
-				"codemarks"
-			);
-		}
-
-		return comments;
-	}
-
-	private async _getPullRequests(remotePath: string): Promise<GitLabPullRequest[]> {
-		return flatten(
-			await Promise.all([
-				this._getPullRequestsByState(remotePath, "opened"),
-				this._getPullRequestsByState(remotePath, "merged")
-			])
-		);
-	}
-
-	private async _getPullRequestsByState(
-		remotePath: string,
-		state: string
-	): Promise<GitLabPullRequest[]> {
-		const prs: GitLabPullRequest[] = [];
-
-		try {
-			let url: string | undefined = `/projects/${encodeURIComponent(
-				remotePath
-			)}/merge_requests?state=${state}`;
-			do {
-				const apiResponse = await this.get<GitLabPullRequest[]>(url);
-				// Logger.log("Got ack" + JSON.stringify(apiResponse, null, 4));
-				prs.push(...apiResponse.body);
-				url = this.nextPage(apiResponse.response);
-			} while (url);
-		} catch (ex) {
-			Logger.error(ex);
-		}
-
-		prs.forEach(pr => (pr.number = pr.iid));
-		return prs;
-	}
-
-	private async _getPullRequestComments(
-		remotePath: string,
-		pr: GitLabPullRequest,
-		relativePath: string
-	): Promise<PullRequestComment[]> {
-		let gitLabComments: GitLabPullRequestComment[] = [];
-
-		try {
-			let apiResponse = await this.get<GitLabPullRequestComment[]>(
-				`/projects/${encodeURIComponent(remotePath)}/merge_requests/${pr.iid}/notes`
-			);
-			gitLabComments = apiResponse.body;
-
-			let nextPage: string | undefined;
-			while ((nextPage = this.nextPage(apiResponse.response))) {
-				apiResponse = await this.get<GitLabPullRequestComment[]>(nextPage);
-				gitLabComments = gitLabComments.concat(apiResponse.body);
-			}
-		} catch (ex) {
-			Logger.error(ex);
-		}
-
-		return gitLabComments
-			.filter(c => !c.system && c.position != null && c.position.new_path === relativePath)
-			.map(glComment => {
-				return {
-					id: glComment.id.toString(),
-					author: {
-						id: glComment.author.id.toString(),
-						nickname: glComment.author.name,
-						login: glComment.author.name
-					},
-					path: glComment.position.new_path,
-					text: glComment.body,
-					code: "",
-					commit: glComment.position.head_sha,
-					originalCommit: glComment.position.base_sha,
-					line: glComment.position.new_line,
-					originalLine: glComment.position.old_line,
-					url: `${pr.web_url}#note_${glComment.id}`,
-					createdAt: new Date(glComment.created_at).getTime(),
-					pullRequest: {
-						id: pr.iid,
-						externalId: JSON.stringify({ full: pr.references?.full, id: pr.id }),
-						url: pr.web_url,
-						isOpen: pr.state === "opened",
-						targetBranch: pr.target_branch,
-						sourceBranch: pr.source_branch,
-						title: pr.title
+			} as ProviderGetForkedReposResponse;
+			if (projectResponse.body.forked_from_project) {
+				response.parent = {
+					nameWithOwner: parentProject.path_with_namespace,
+					owner: parentProject.namespace.path,
+					id: parentProject.id,
+					refs: {
+						nodes: branchesByProjectId.get(parentProject.id)!.map(branch => ({ name: branch.name }))
 					}
 				};
-			});
+			}
+			return response;
+		} catch (ex) {
+			return this.handleProviderError(ex, request);
+		}
 	}
 
 	async getMyPullRequests(
@@ -852,9 +705,34 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 		if (repos.length) {
 			// https://docs.gitlab.com/ee/api/merge_requests.html
 			const buildUrl = (repo: string, query: string) => {
-				return `/projects/${encodeURIComponent(repo)}/merge_requests?${createQueryString(
-					query
-				)}&with_labels_details=true`;
+				if (query.match(/=/)) {
+					// New format of queries
+					let filter = JSON.parse(JSON.stringify(qs.parse(query)));
+					if (filter && currentUser) {
+						this.replaceMe(filter, currentUser);
+					}
+					if (!filter.scope) {
+						filter["scope"] = "all";
+					}
+					let url;
+					if (filter?.project_id) {
+						delete filter["project_id"];
+						url = `/projects/${encodeURIComponent(repo)}/merge_requests?${qs.stringify(filter)}`;
+					} else if (filter?.group_id) {
+						delete filter["group_id"];
+						url = `/projects/${encodeURIComponent(repo)}/merge_requests?${qs.stringify(filter)}`;
+					} else {
+						url = `/projects/${encodeURIComponent(repo)}/merge_requests?${qs.stringify(
+							filter
+						)}&with_labels_details=true`;
+					}
+					return url;
+				} else {
+					// Old format of queries
+					return `/projects/${encodeURIComponent(repo)}/merge_requests?${createQueryString(
+						query
+					)}&with_labels_details=true`;
+				}
 			};
 			for (const query of queries) {
 				const splits = query.split(",");
@@ -906,8 +784,6 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 					// Old format of queries
 					return `/merge_requests?${createQueryString(query)}&with_labels_details=true`;
 				}
-
-				
 			};
 			for (const query of queries) {
 				const splits = query.split(",");
@@ -1016,10 +892,14 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				}
 			});
 		} catch (ex) {
-			Logger.warn(`${this.providerConfig.id} getVersion`, {
-				error: ex
-			});
-			version = this.DEFAULT_VERSION;
+			Logger.warn(
+				`${this.providerConfig.id} getVersion failed, defaulting to lowest supporting version`,
+				{
+					error: ex,
+					lowestSupportedVersion: this.LOWEST_SUPPORTED_VERSION
+				}
+			);
+			version = this.LOWEST_SUPPORTED_VERSION;
 		}
 
 		this._providerVersions.set(this.providerConfig.id, version);
@@ -1114,6 +994,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 	async restPut<T extends object, R extends object>(url: string, variables: any) {
 		return this.put<T, R>(url, variables);
 	}
+
 	async restDelete<R extends object>(url: string, options: { useRawResponse: boolean }) {
 		return this.delete<R>(url, {}, options);
 	}
@@ -1148,6 +1029,16 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 
 		Logger.log(`getCurrentUser ${JSON.stringify(currentUser)} for id=${this.providerConfig.id}`);
 		return currentUser;
+	}
+
+	onDisconnected(request: ThirdPartyDisconnect) {
+		this._currentGitlabUsers.clear();
+		this._projectsByRemotePath.clear();
+		this._assignableUsersCache.clear();
+		this._pullRequestCache.clear();
+		this._ignoredFeatures.clear();
+		this._pullRequestIdCache.clear();
+		return super.onDisconnected(request);
 	}
 
 	_pullRequestCache: Map<string, GitLabMergeRequestWrapper> = new Map();
@@ -1298,6 +1189,9 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				response.project.mergeRequest.mergedAt = mergeRequest.body.merged_at;
 			}
 
+			// remap here because "draft" used to be workInProgress
+			response.project.mergeRequest.isDraft = response.project.mergeRequest.draft;
+
 			// assignees from graphql don't exist on <= 12.10.x
 			// get it from REsT api
 			response.project.mergeRequest.assignees = {
@@ -1333,6 +1227,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				only_allow_merge_if_all_discussions_are_resolved: boolean;
 				only_allow_merge_if_pipeline_succeeds: boolean;
 				allow_merge_on_skipped_pipeline: boolean;
+				squash_option: "never" | "always" | "default_on" | "default_off";
 			}>(`/projects/${encodeURIComponent(projectFullPath)}`);
 
 			response.project.mergeMethod = project.body.merge_method!;
@@ -1341,6 +1236,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				project.body.only_allow_merge_if_all_discussions_are_resolved;
 			response.project.onlyAllowMergeIfPipelineSucceeds =
 				project.body.only_allow_merge_if_pipeline_succeeds;
+			response.project.squashOption = project.body.squash_option;
 
 			const users = await this.getAssignableUsers({ boardId: encodeURIComponent(projectFullPath) });
 
@@ -1483,6 +1379,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 			);
 
 			this._pullRequestCache.set(request.pullRequestId, response);
+			response.project.mergeRequest.repository;
 		} catch (ex) {
 			Logger.error(ex, "getMergeRequest", {
 				...request
@@ -1493,7 +1390,10 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				}
 			} as any;
 		}
-
+		Logger.log("getPullRequest returning", {
+			id: request.pullRequestId,
+			repository: response.project.mergeRequest.repository
+		});
 		return response;
 	}
 
@@ -2190,7 +2090,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 						data: {
 							updatedAt: Dates.toUtcIsoNow(),
 							title: body.title,
-							workInProgress: body.work_in_progress,
+							isDraft: body.draft,
 							description: this.enhanceMarkdownBlock(request.description, projectFullPath),
 							targetBranch: body.target_branch,
 							assignees: {
@@ -2495,8 +2395,8 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 			});
 		} else {
 			const query = `
-				mutation DestroyNote($id:ID!) {
-					destroyNote(input:{id:$id}) {
+				mutation DestroyNote($id: NoteID!) {
+					destroyNote(input:{id: $id}) {
 			  			clientMutationId
 			  				note {
 								id
@@ -2778,11 +2678,11 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 
 		try {
 			const response = await this.mutate<any>(
-				`mutation MergeRequestSetWip($projectPath: ID!, $iid: String!, $wip: Boolean!) {
-					mergeRequestSetWip(input: {projectPath: $projectPath, iid: $iid, wip: $wip}) {
+				`mutation MergeRequestSetWip($projectPath: ID!, $iid: String!, $draft: Boolean!) {
+					mergeRequestSetDraft(input: {projectPath: $projectPath, iid: $iid, draft: $draft}) {
 					  mergeRequest {
+						draft
 						title
-						workInProgress
 					  }
 					}
 				  }
@@ -2790,7 +2690,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				{
 					projectPath: projectFullPath,
 					iid: iid,
-					wip: request.onOff
+					draft: request.onOff
 				}
 			);
 
@@ -2800,8 +2700,8 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 						type: "updatePullRequest",
 						data: {
 							updatedAt: Dates.toUtcIsoNow(),
-							workInProgress: response.mergeRequestSetWip.mergeRequest.workInProgress,
-							title: response.mergeRequestSetWip.mergeRequest.title
+							isDraft: response.mergeRequestSetDraft.mergeRequest.draft,
+							title: response.mergeRequestSetDraft.mergeRequest.title
 						}
 					}
 				]
@@ -3133,7 +3033,9 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 			endLine: number;
 		};
 	}): Promise<Directives> {
-		let projectFullPath, id, iid;
+		let projectFullPath;
+		let id;
+		let iid;
 		try {
 			({ projectFullPath, id, iid } = this.parseId(request.pullRequestId));
 
@@ -3372,6 +3274,16 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 				iid: iid
 			}
 		);
+
+		if (!pullRequestInfo || !pullRequestInfo.project || !pullRequestInfo.project.mergeRequest) {
+			const message = "Merge request not found. Please check your url or access token.";
+			Logger.warn(message, {
+				fullPath: fullPath,
+				iid: iid,
+				id: id
+			});
+			throw new Error(message);
+		}
 		try {
 			return JSON.stringify({
 				full: `${fullPath}!${iid}`,
@@ -3647,6 +3559,7 @@ export class GitLabProvider extends ThirdPartyIssueProviderBase<CSGitLabProvider
 			return match.replace(group1, `${this.baseWebUrl}/${projectFullPath}${group1}`);
 		});
 	}
+
 	/**
 	 * Adds fully-qualified URLs to an html property.
 	 * Only required when sending to the webview

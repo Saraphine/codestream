@@ -166,7 +166,6 @@ namespace CodeStream.VisualStudio.Core.Models {
 	public class OtcLoginRequest {
 		public string Code { get; set; }
 		public string TeamId { get; set; }
-		public string Team { get; set; }
 		public bool? Alias { get; set; }
 	}
 
@@ -213,10 +212,19 @@ namespace CodeStream.VisualStudio.Core.Models {
 		}
 	}
 
+	public class EnvironmentHost {
+		public string Name { get; set; }
+		public string PublicApiUrl { get; set; }
+		public string ShortName { get; set; }
+	}
+
 	public class CodeStreamEnvironmentInfo {
 		public string Environment { get; set; } // local, prod, onprem, unknown
 		public bool IsOnPrem { get; set; }
 		public bool IsProductionCloud { get; set; }
+		public string NewRelicLandingServiceUrl { get; set; }
+		public string NewRelicApiUrl { get; set; }
+		public List<EnvironmentHost> EnvironmentHosts { get; set; }
 	}
 
 	public class DidSetEnvironmentNotificationType : NotificationType<CodeStreamEnvironmentInfo> {

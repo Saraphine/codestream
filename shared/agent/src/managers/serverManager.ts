@@ -1,12 +1,13 @@
-import { Logger } from "../logger";
-import { CodeStreamSession } from "../session";
+import { ParsedUrlQueryInput } from "querystring";
 import * as qs from "querystring";
+import { Logger } from "../logger";
 import {
 	CodeStreamApiDeleteRequestType,
 	CodeStreamApiGetRequestType,
 	CodeStreamApiPostRequestType,
 	CodeStreamApiPutRequestType
 } from "../protocol/agent.protocol";
+import { CodeStreamSession } from "../session";
 import { lsp, lspHandler } from "../system";
 
 @lsp
@@ -14,7 +15,7 @@ export class ServerManager {
 	constructor(private readonly session: CodeStreamSession) {}
 
 	@lspHandler(CodeStreamApiGetRequestType)
-	async get(request: { url: string; queryData: object }): Promise<any> {
+	async get(request: { url: string; queryData: ParsedUrlQueryInput }): Promise<any> {
 		try {
 			if (request.queryData) {
 				request.url += `?${qs.stringify(request.queryData)}`;

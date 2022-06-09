@@ -4,7 +4,6 @@ using CodeStream.VisualStudio.Core.Logging;
 namespace CodeStream.VisualStudio.Core.Models {
 	public interface IOptions {
 		string Email { get; set; }
-		string Team { get; set; }
 		bool ShowAvatars { get; set; }
 		bool AutoSignIn { get; set; }
 
@@ -16,6 +15,9 @@ namespace CodeStream.VisualStudio.Core.Models {
 		bool ProxyStrictSsl { get; set; }
 		ProxySupport ProxySupport { get; set; }
 		bool DisableStrictSSL { get; set; }
+		string ExtraCertificates { get; set; }
+
+		string GoldenSignalsInEditorFormat { get; set; }
 	}
 
 	public interface IOptionsDialogPage : IOptions, INotifyPropertyChanged {

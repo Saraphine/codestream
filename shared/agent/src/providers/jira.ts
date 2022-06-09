@@ -6,17 +6,18 @@ import { Logger } from "../logger";
 import {
 	CreateJiraCardRequest,
 	CreateThirdPartyCardRequest,
+	FetchAssignableUsersAutocompleteRequest,
+	FetchAssignableUsersResponse,
 	FetchThirdPartyBoardsRequest,
 	FetchThirdPartyBoardsResponse,
 	FetchThirdPartyCardsRequest,
 	FetchThirdPartyCardsResponse,
 	JiraBoard,
 	JiraCard,
-	JiraConfigurationData,
 	JiraUser,
 	MoveThirdPartyCardRequest,
-	ProviderConfigurationData,
 	ReportingMessageType,
+	ThirdPartyDisconnect,
 	ThirdPartyProviderCard
 } from "../protocol/agent.protocol";
 import { CSJiraProviderInfo } from "../protocol/api.protocol";
@@ -103,6 +104,7 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 	private _webUrl = "";
 	private boards: JiraBoard[] = [];
 	private domain?: string;
+	private _workspaces: string[] | undefined;
 
 	get displayName() {
 		return "Jira";
@@ -135,14 +137,22 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 	}
 
 	async onConnected(providerInfo?: CSJiraProviderInfo) {
-		super.onConnected(providerInfo);
-		this._urlAddon = "";
+		await super.onConnected(providerInfo);
 		if (this._providerInfo?.isApiToken) {
 			this._webUrl = this._providerInfo?.data?.baseUrl || "";
+			Logger.log("jira using api token with webUrl", this._webUrl);
 			return;
 		}
+		if (this._urlAddon?.length > 0) {
+			return;
+		}
+
+		// Infinite loop if get also does ensureConnected() so pass flag to disable check
 		const response = await this.get<AccessibleResourcesResponse>(
-			"/oauth/token/accessible-resources"
+			"/oauth/token/accessible-resources",
+			undefined,
+			undefined,
+			false
 		);
 
 		Logger.debug("Jira: Accessible Resources are", response.body);
@@ -158,27 +168,23 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 
 		// FIXME: this is problematic, user may be in multiple workspaces and
 		// we're assuming the first one here
+		this._workspaces = response.body.map(_ => _.id);
 		this._urlAddon = `/ex/jira/${response.body[0].id}`;
 		this._webUrl = response.body[0].url;
 
 		Logger.debug(`Jira: api url is ${this._urlAddon}`);
 	}
 
-	async onDisconnected() {
+	async onDisconnected(request?: ThirdPartyDisconnect) {
+		this._urlAddon = "";
+		this._webUrl = "";
+		delete this.domain;
 		this.boards = [];
+		return super.onDisconnected(request);
 	}
 
-	@log()
-	async configure(request: JiraConfigurationData) {
-		await this.session.api.setThirdPartyProviderToken({
-			providerId: this.providerConfig.id,
-			token: request.token,
-			data: {
-				email: request.email,
-				baseUrl: request.baseUrl
-			}
-		});
-		this.session.updateProviders();
+	canConfigure() {
+		return true;
 	}
 
 	@log()
@@ -188,6 +194,7 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 			Logger.debug("Jira: fetching projects");
 			const jiraBoards: JiraBoard[] = [];
 			let nextPage: string | undefined = "/rest/api/2/project/search";
+			let pageNum = 0;
 
 			while (nextPage) {
 				try {
@@ -196,25 +203,43 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 					);
 					Logger.debug(`Jira: got ${body.values.length} projects`);
 
+					// For explanation on this commented out code, see the definition of the isCompatibleProject() method, below
+					/*
+					await Promise.all(
+						body.values.map(async project => {
+							const board = await this.isCompatibleProject(project);
+							if (board) {
+								jiraBoards.push(board);
+							}
+						})
+					);
+					*/
+
 					jiraBoards.push(...(await this.filterBoards(body.values)));
 
 					Logger.debug(`Jira: is last page? ${body.isLast} - nextPage ${body.nextPage}`);
 					if (body.nextPage) {
 						nextPage = body.nextPage.substring(body.nextPage.indexOf("/rest/api/2"));
+						pageNum++;
 					} else {
 						Logger.debug("Jira: there are no more projects");
 						nextPage = undefined;
 					}
 				} catch (e) {
+					const message = e instanceof Error ? e.message : JSON.stringify(e);
 					Container.instance().errorReporter.reportMessage({
 						type: ReportingMessageType.Error,
 						message: `Jira: Error fetching jira projects: ${nextPage}`,
 						source: "agent",
 						extra: {
-							message: e.message
+							message,
+							nextPage,
+							pageNum,
+							baseUrl: this.baseUrl,
+							workspaces: this._workspaces
 						}
 					});
-					Logger.error(e);
+					Logger.error(e, message);
 					Logger.debug("Jira: Stopping project search");
 					nextPage = undefined;
 				}
@@ -231,7 +256,11 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 				type: ReportingMessageType.Error,
 				message: "Jira: Error fetching jira boards",
 				source: "agent",
-				extra: { message: error.message }
+				extra: {
+					message: error.message,
+					baseUrl: this.baseUrl,
+					workspaces: this._workspaces
+				}
 			});
 			Logger.error(error, "Error fetching jira boards");
 			return { boards: [] };
@@ -247,14 +276,17 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 					expand: "projects.issuetypes.fields"
 				})}`
 			);
-
 			return this.getCompatibleBoards(response.body);
 		} catch (error) {
 			Container.instance().errorReporter.reportMessage({
 				type: ReportingMessageType.Error,
 				message: "Jira: Error fetching issue metadata for projects",
 				source: "agent",
-				extra: { message: error.message }
+				extra: {
+					message: error.message,
+					baseUrl: this.baseUrl,
+					workspaces: this._workspaces
+				}
 			});
 			Logger.error(
 				error,
@@ -311,40 +343,49 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 		try {
 			Logger.debug("Jira: fetching cards");
 			const jiraCards: JiraCard[] = [];
-			let nextPage: string | undefined = `/rest/api/2/search?${qs.stringify({
+			let pageNum = 0;
+			const queryString = qs.stringify({
 				jql:
 					request.customFilter ||
-					"assignee=currentuser() AND (status!=Closed OR resolution=Unresolved)",
+					"assignee=currentuser() AND NOT((status in (Closed, Done, Resolved)) OR resolution != Unresolved)",
 				expand: "transitions,names",
 				fields: "summary,description,updated,subtasks,status,issuetype,priority,assignee"
-			})}`;
+			});
+			let nextPage: string | undefined = `/rest/api/2/search?${queryString}`;
+			let errorMessage: string | undefined;
 
 			while (nextPage !== undefined) {
 				try {
 					const { body }: { body: CardSearchResponse } = await this.get<CardSearchResponse>(
 						nextPage
 					);
-
 					// Logger.debug("GOT CARDS: " + JSON.stringify(body, null, 4));
 					jiraCards.push(...body.issues);
 
 					Logger.debug(`Jira: is last page? ${body.isLast} - nextPage ${body.nextPage}`);
 					if (body.nextPage) {
 						nextPage = body.nextPage.substring(body.nextPage.indexOf("/rest/api/2"));
+						pageNum++;
 					} else {
 						Logger.debug("Jira: there are no more cards");
 						nextPage = undefined;
 					}
 				} catch (e) {
+					errorMessage = e instanceof Error ? e.message : JSON.stringify(e);
 					Container.instance().errorReporter.reportMessage({
 						type: ReportingMessageType.Error,
 						message: "Jira: Error fetching jira cards",
 						source: "agent",
 						extra: {
-							message: e.message
+							message: errorMessage,
+							queryString,
+							nextPage,
+							pageNum,
+							baseUrl: this.baseUrl,
+							workspaces: this._workspaces
 						}
 					});
-					Logger.error(e);
+					Logger.error(e, errorMessage);
 					Logger.debug("Jira: Stopping card search");
 					nextPage = undefined;
 				}
@@ -353,16 +394,25 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 			Logger.debug(`Jira: total cards: ${jiraCards.length}`);
 			const cards: ThirdPartyProviderCard[] = [];
 			jiraCards.forEach(card => cards.push(makeCardFromJira(card, this._webUrl)));
-			return { cards };
+			const response: FetchThirdPartyCardsResponse = { cards };
+			if (errorMessage) {
+				response.error = { message: errorMessage };
+			}
+			return response;
 		} catch (error) {
 			debugger;
+			const message = error instanceof Error ? error.message : JSON.stringify(error);
 			Container.instance().errorReporter.reportMessage({
 				type: ReportingMessageType.Error,
-				message: "Jira: Error fetching jira cards",
+				message: "Jira: Uncaught error fetching jira cards",
 				source: "agent",
-				extra: { message: error.message }
+				extra: {
+					message,
+					baseUrl: this.baseUrl,
+					workspaces: this._workspaces
+				}
 			});
-			Logger.error(error, "Error fetching jira cards");
+			Logger.error(error, "Uncaught error fetching jira cards");
 			return { cards: [] };
 		}
 	}
@@ -412,7 +462,11 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 				type: ReportingMessageType.Error,
 				message: "Jira: Error moving jira card",
 				source: "agent",
-				extra: { message: error.message }
+				extra: {
+					message: error.message,
+					baseUrl: this.baseUrl,
+					workspaces: this._workspaces
+				}
 			});
 			Logger.error(error, "Error moving jira card");
 			return {};
@@ -427,6 +481,20 @@ export class JiraProvider extends ThirdPartyIssueProviderBase<CSJiraProviderInfo
 			`/rest/api/2/user/assignable/search?${qs.stringify({
 				project: request.boardId,
 				maxResults: 1000
+			})}`
+		);
+		return { users: body.map(u => ({ ...u, id: u.accountId })) };
+	}
+
+	@log()
+	async getAssignableUsersAutocomplete(
+		request: FetchAssignableUsersAutocompleteRequest
+	): Promise<FetchAssignableUsersResponse> {
+		const { body } = await this.get<JiraUser[]>(
+			`/rest/api/2/user/assignable/search?${qs.stringify({
+				query: request.search,
+				project: request.boardId,
+				maxResults: 50
 			})}`
 		);
 		return { users: body.map(u => ({ ...u, id: u.accountId })) };

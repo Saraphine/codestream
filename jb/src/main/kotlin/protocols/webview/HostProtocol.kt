@@ -1,6 +1,7 @@
 package com.codestream.protocols.webview
 
 import com.codestream.agent.ApiVersionCompatibility
+import com.codestream.protocols.agent.IdeClass
 import com.codestream.protocols.agent.Marker
 import com.codestream.review.CodeStreamDiffUriContext
 import com.google.gson.JsonElement
@@ -15,7 +16,7 @@ class BootstrapResponse(
     val configs: Configs,
     val context: JsonElement,
     val version: String,
-    val ide: Ide,
+    val ide: IdeClass,
     val apiVersionCompatibility: ApiVersionCompatibility?,
     val missingCapabilities: JsonObject?
 )
@@ -37,14 +38,8 @@ class Configs(
     val showHeadshots: Boolean,
     val debug: Boolean,
     val showFeedbackSmiley: Boolean,
-    val team: String?
+    val showGoldenSignalsInEditor: Boolean
 )
-
-class Ide(
-    val name: String,
-    val detail: String
-)
-
 class Services {
     val vsls = false
 }
@@ -81,6 +76,7 @@ class EditorRangeHighlightRequest(
 
 class EditorRangeRevealRequest(
     val uri: String,
+    val ref: String?,
     val range: Range,
     val preserveFocus: Boolean?,
     val atTop: Boolean?
@@ -104,6 +100,10 @@ class EditorScrollToRequest(
     val uri: String,
     val position: Position,
     val atTop: Boolean
+)
+
+class EditorsCodelensRefreshResponse(
+    val success: Boolean
 )
 
 class ReviewShowDiffRequest(
@@ -143,7 +143,21 @@ class MarkerInsertTextRequest(
 
 class UpdateServerUrlRequest(
     val serverUrl: String,
-    val disableStrictSSL: Boolean = false
+    val disableStrictSSL: Boolean = false,
+    val environment: String
+)
+
+enum class LogoutReason {
+    @SerializedName("unknown")
+    UNKNOWN,
+    @SerializedName("reAuthenticating")
+    RE_AUTHENTICATING
+}
+class LogoutRequest(
+    val reason: LogoutReason?,
+    val newServerUrl: String?,
+    val newEnvironment: String?
+
 )
 
 class OpenUrlRequest(

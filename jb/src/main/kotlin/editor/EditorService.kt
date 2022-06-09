@@ -5,6 +5,7 @@ import com.codestream.codeStream
 import com.codestream.extensions.displayPath
 import com.codestream.extensions.file
 import com.codestream.extensions.getOffset
+import com.codestream.extensions.gitSha
 import com.codestream.extensions.highlightTextAttributes
 import com.codestream.extensions.isRangeVisible
 import com.codestream.extensions.lighten
@@ -14,6 +15,7 @@ import com.codestream.extensions.selections
 import com.codestream.extensions.textDocumentIdentifier
 import com.codestream.extensions.uri
 import com.codestream.extensions.visibleRanges
+import com.codestream.git.getCSGitFile
 import com.codestream.protocols.agent.DocumentMarker
 import com.codestream.protocols.agent.DocumentMarkersParams
 import com.codestream.protocols.agent.Marker
@@ -37,6 +39,7 @@ import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.diff.util.DiffUserDataKeys
+import com.intellij.diff.util.DiffUserDataKeysEx
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.ServiceManager
@@ -47,6 +50,7 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.LogicalPosition
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
@@ -91,6 +95,8 @@ class EditorService(val project: Project) {
     private val logger = Logger.getInstance(EditorService::class.java)
     private val appSettings = ServiceManager.getService(ApplicationSettingsService::class.java)
 
+    private val gitDocuments = mutableSetOf<Document>()
+    private val reviewDocuments = mutableSetOf<Document>()
     private val managedDocuments = mutableMapOf<Document, DocumentVersion>()
     private val managedEditors = mutableSetOf<Editor>()
     private val rangeHighlighters = mutableMapOf<Editor, MutableSet<RangeHighlighter>>()
@@ -98,10 +104,12 @@ class EditorService(val project: Project) {
     private val documentMarkers = mutableMapOf<Document, List<DocumentMarker>>()
     private var spatialViewActive = project.settingsService?.webViewContext?.spatialViewVisible ?: false
     private var codeStreamVisible = project.codeStream?.isVisible ?: false
+    private val inlineTextFieldManagers = mutableMapOf<Editor, InlineTextFieldManager>()
 
     fun add(editor: Editor) {
         val document = editor.document
         val reviewFile = editor.document.file as? ReviewDiffVirtualFile
+
         if (reviewFile != null) {
             if (!reviewFile.canCreateMarker || reviewFile.side == ReviewDiffSide.LEFT) return
         } else {
@@ -113,10 +121,22 @@ class EditorService(val project: Project) {
         rangeHighlighters[editor] = mutableSetOf()
         editor.selectionModel.addSelectionListener(SelectionListenerImpl(project))
         editor.scrollingModel.addVisibleAreaListener(VisibleAreaListenerImpl(project))
-        NewCodemarkGutterIconManager(editor)
+        (editor as? EditorImpl)?.let {
+            NewCodemarkGutterIconManager(editor)
+            if (reviewFile != null) {
+                inlineTextFieldManagers[editor] = InlineTextFieldManager(editor)
+            }
+        }
+
+        if (document.gitSha != null) {
+            gitDocuments.add(document)
+        }
+        if (reviewFile != null) {
+            reviewDocuments.add(document)
+        }
 
         // Enable LSP document management only for local files
-        if (reviewFile != null) return
+        if (reviewFile != null || document.gitSha != null) return
         agentService.onDidStart {
             synchronized(managedDocuments) {
                 if (!managedDocuments.contains(document)) {
@@ -132,8 +152,11 @@ class EditorService(val project: Project) {
 
     fun remove(editor: Editor) {
         val agentService = project.agentService ?: return
+        gitDocuments.remove(editor.document)
+        reviewDocuments.remove(editor.document)
         managedEditors.remove(editor)
         rangeHighlighters.remove(editor)
+        inlineTextFieldManagers.remove(editor)
 
         val document = editor.document
         agentService.onDidStart {
@@ -199,6 +222,7 @@ class EditorService(val project: Project) {
                     project.webViewService?.postNotification(
                         EditorNotifications.DidChangeVisibleRanges(
                             editor.document.uri,
+                            editor.document.gitSha,
                             editor.selections,
                             editor.visibleRanges,
                             editor.document.lineCount
@@ -212,11 +236,25 @@ class EditorService(val project: Project) {
         for ((document, _) in managedDocuments) {
             updateMarkers(document)
         }
+        for (document in gitDocuments) {
+            updateMarkers(document)
+        }
+        for (document in reviewDocuments) {
+            updateMarkers(document)
+        }
     }
 
     fun updateMarkers(uri: String) {
         val document = managedDocuments.keys.find { it.uri == uri }
         document?.let {
+            updateMarkers(it)
+        }
+        val gitDocuments = gitDocuments.filter { it.uri == uri }
+        gitDocuments.forEach {
+            updateMarkers(it)
+        }
+        val reviewDocuments = reviewDocuments.filter { uri.endsWith(it.getUserData(DiffUserDataKeysEx.FILE_NAME) ?: "nothing") }
+        reviewDocuments.forEach {
             updateMarkers(it)
         }
     }
@@ -259,7 +297,7 @@ class EditorService(val project: Project) {
         val markers = if (uri == null || session.userLoggedIn == null || !appSettings.showMarkers) {
             emptyList()
         } else {
-            val result = agent.documentMarkers(DocumentMarkersParams(TextDocument(uri), true))
+            val result = agent.documentMarkers(DocumentMarkersParams(TextDocument(uri), document.gitSha, true))
             result.markers
         }
 
@@ -390,6 +428,7 @@ class EditorService(val project: Project) {
                 EditorInformation(
                     displayPath,
                     document.uri,
+                    document.gitSha,
                     EditorMetrics(
                         colorsScheme.editorFontSize,
                         lineHeight,
@@ -448,16 +487,20 @@ class EditorService(val project: Project) {
             return@invokeLater
         }
 
-        if (!highlight || range == null) {
-            synchronized(highlighters) {
-                for (highlighter in highlighters) {
-                    editor.markupModel.removeHighlighter(highlighter)
-                    highlighter.dispose()
-                }
-                highlighters.clear()
+        synchronized(highlighters) {
+            for (highlighter in highlighters) {
+                editor.markupModel.removeHighlighter(highlighter)
+                highlighter.dispose()
             }
+            highlighters.clear()
+        }
+        if (!highlight || range == null) {
             return@invokeLater
         }
+
+        val logicalPosition = LogicalPosition(range.start.line, range.start.character)
+        val point = editor.logicalPositionToXY(logicalPosition)
+        editor.scrollingModel.scrollVertically(point.y)
 
         synchronized(highlighters) {
             if (range.start.line >= editor.document.lineCount) {
@@ -465,7 +508,10 @@ class EditorService(val project: Project) {
             }
 
             val highlighter =
-                if (range.start.line == range.end.line && range.start.character == 0 && range.end.character > 1000) {
+                if (range.start.line == range.end.line
+                    && range.start.character == 0
+                    && (range.end.character > 1000) || range.end.character == 0
+                ) {
                     editor.markupModel.addLineHighlighter(
                         range.start.line, HighlighterLayer.LAST, getHighlightTextAttributes(editor)
                     )
@@ -485,86 +531,123 @@ class EditorService(val project: Project) {
         }
     }
 
-    suspend fun reveal(uri: String, range: Range?, atTop: Boolean? = null): Boolean {
+    suspend fun reveal(uri: String, ref: String?, range: Range?, atTop: Boolean? = null): Boolean {
+        var success = revealCore(uri, ref, range, atTop)
+        if (!success) {
+            success = revealCore(sanitizeURI(uri)!!, ref, range, atTop)
+        }
+        return success
+    }
+
+    private suspend fun revealCore(uri: String, ref: String?, range: Range?, atTop: Boolean? = null): Boolean {
         val future = CompletableDeferred<Boolean>()
+
         ApplicationManager.getApplication().invokeLater {
-            val editor = FileEditorManager.getInstance(project).selectedTextEditor
-            editor?.let {
-                if (it.document.uri == uri && (range == null || it.isRangeVisible(range))) {
+            try {
+                if (!ref.isNullOrEmpty()) {
+                    val vFile = getCSGitFile(uri, ref, project)
+                    val editorManager = FileEditorManager.getInstance(project)
+                    editorManager.openTextEditor(OpenFileDescriptor(project, vFile, range?.start?.line ?: 0, 0), false)
                     future.complete(true)
                     return@invokeLater
                 }
-            }
 
-            val line = range?.start?.line ?: 0
-            val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(URI(uri)))
-            if (virtualFile == null) {
-                future.complete(false)
-                return@invokeLater
-            }
-
-            if (editor?.document?.uri == uri && range != null && atTop == true) {
-                val logicalPosition = LogicalPosition(range.start.line, range.start.character)
-                val point = editor.logicalPositionToXY(logicalPosition)
-                editor.scrollingModel.scrollVertically(point.y)
-            } else {
-                val editorManager = FileEditorManager.getInstance(project)
-                editorManager.openTextEditor(OpenFileDescriptor(project, virtualFile, line, 0), true)
-            }
-
-            future.complete(true)
-        }
-        return future.await()
-    }
-
-    suspend fun select(uriString: String, selection: EditorSelection, preserveFocus: Boolean): Boolean {
-        val future = CompletableDeferred<Boolean>()
-        ApplicationManager.getApplication().invokeLater {
-            var editor = FileEditorManager.getInstance(project).selectedTextEditor
-            if (editor?.document?.uri != uriString || !editor.isRangeVisible(selection)) {
-                val uri = URI(uriString)
-                val virtualFile = if (uri.scheme == ReviewDiffFileSystem.protocol) {
-                    FileEditorManager.getInstance(project).openFiles.find { it.uri == uriString }
-                } else {
-                    LocalFileSystem.getInstance().findFileByIoFile(File(uri))
+                val editor = FileEditorManager.getInstance(project).selectedTextEditor
+                editor?.let {
+                    if (it.document.uri == uri && (range == null || it.isRangeVisible(range))) {
+                        future.complete(true)
+                        return@invokeLater
+                    }
                 }
 
+                val line = range?.start?.line ?: 0
+                val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(URI(uri)))
                 if (virtualFile == null) {
                     future.complete(false)
                     return@invokeLater
                 }
 
-                val editorManager = FileEditorManager.getInstance(project)
-                val line = selection.start.line
-                editor = editorManager.openTextEditor(OpenFileDescriptor(project, virtualFile, line, 0), true)
-            }
+                if (editor?.document?.uri == uri && range != null && atTop == true) {
+                    val logicalPosition = LogicalPosition(range.start.line, range.start.character)
+                    val point = editor.logicalPositionToXY(logicalPosition)
+                    editor.scrollingModel.scrollVertically(point.y)
+                } else {
+                    val editorManager = FileEditorManager.getInstance(project)
+                    editorManager.openTextEditor(OpenFileDescriptor(project, virtualFile, line, 0), true)
+                }
 
-            if (editor == null) {
+                future.complete(true)
+            } catch (ex: Exception) {
+                logger.warn(ex)
                 future.complete(false)
-                return@invokeLater
             }
+        }
+        return future.await()
+    }
 
-            editor.apply {
-                val start = getOffset(selection.start)
-                val end = getOffset(selection.end)
-                val caret = getOffset(selection.cursor)
-                selectionModel.setSelection(start, end)
-                caretModel.moveToOffset(caret)
-                if (!preserveFocus) component.grabFocus()
+    suspend fun select(uriString: String, selection: EditorSelection, preserveFocus: Boolean): Boolean {
+        var success = selectCore(uriString, selection, preserveFocus)
+        if (!success) {
+            success = selectCore(sanitizeURI(uriString)!!, selection, preserveFocus)
+        }
+        return success
+    }
+
+    private suspend fun selectCore(uriString: String, selection: EditorSelection, preserveFocus: Boolean): Boolean {
+        val future = CompletableDeferred<Boolean>()
+        ApplicationManager.getApplication().invokeLater {
+            try {
+                var editor = FileEditorManager.getInstance(project).selectedTextEditor
+                if (editor?.document?.uri != uriString || !editor.isRangeVisible(selection)) {
+                    val uri = URI(uriString)
+                    val virtualFile = if (uri.scheme == ReviewDiffFileSystem.protocol) {
+                        FileEditorManager.getInstance(project).openFiles.find { it.uri == uriString }
+                    } else {
+                        LocalFileSystem.getInstance().findFileByIoFile(File(uri))
+                    }
+
+                    if (virtualFile == null) {
+                        future.complete(false)
+                        return@invokeLater
+                    }
+
+                    val editorManager = FileEditorManager.getInstance(project)
+                    val line = selection.start.line
+                    editor = editorManager.openTextEditor(OpenFileDescriptor(project, virtualFile, line, 0), true)
+                }
+
+                if (editor == null) {
+                    future.complete(false)
+                    return@invokeLater
+                }
+
+                editor.apply {
+                    val start = getOffset(selection.start)
+                    val end = getOffset(selection.end)
+                    val caret = getOffset(selection.cursor)
+                    selectionModel.setSelection(start, end)
+                    caretModel.moveToOffset(caret)
+                    if (!preserveFocus) component.grabFocus()
+                }
+
+                future.complete(true)
+            } catch (ex: Exception) {
+                logger.warn(ex)
+                future.complete(false)
             }
-
-            future.complete(true)
         }
         return future.await()
     }
 
     fun scroll(uri: String, position: Position, atTop: Boolean) = ApplicationManager.getApplication().invokeLater {
-        var editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return@invokeLater
+        var editor = FileEditorManager.getInstance(project).selectedTextEditor ?: activeEditor ?: return@invokeLater
+
         if (editor.document.uri != sanitizeURI(uri)) {
             return@invokeLater
         }
 
-        val logicalPosition = LogicalPosition(position.line, position.character)
+        val line = (position.line - 2).coerceAtLeast(0);
+        val logicalPosition = LogicalPosition(line, 0)
         val point = editor.logicalPositionToXY(logicalPosition)
 
         editor.scrollingModel.scrollVertically(point.y)
@@ -638,6 +721,10 @@ class EditorService(val project: Project) {
                 }
             }
         }
+    }
+
+    fun getInlineTextFieldManager(editor: Editor) : InlineTextFieldManager? {
+        return inlineTextFieldManagers[editor]
     }
 
     // var count = 0

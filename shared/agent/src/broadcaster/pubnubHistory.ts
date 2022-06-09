@@ -2,13 +2,16 @@
 
 "use strict";
 import * as Pubnub from "pubnub";
-import { BroadcasterHistoryOutput } from "./broadcaster";
+import { BroadcasterHistoryOutput, HistoryFetchCallback } from "./broadcaster";
 
 export interface PubnubHistoryInput {
 	pubnub: Pubnub;
 	channels: string[];
 	since: number;
+	reason?: string;
+	cla?: number;
 	debug?(msg: string, info?: any): void; // for debug messages
+	historyFetchCallback?: HistoryFetchCallback;
 }
 
 export class PubnubHistory {
@@ -16,6 +19,7 @@ export class PubnubHistory {
 	private _mostRecentMessage: number = 0;
 	private _allMessages: any[] = [];
 	private _debug: (msg: string, info?: any) => void = () => {};
+	private _historyFetchCallback: HistoryFetchCallback | undefined;
 
 	// Fetch the history of messages that have come through the specified channels since the specified timestamp
 	// We do a batch fetch (https://www.pubnub.com/docs/nodejs-javascript/api-reference-storage-and-playback#batch-history)
@@ -33,6 +37,7 @@ export class PubnubHistory {
 	//
 	async fetchHistory(options: PubnubHistoryInput): Promise<BroadcasterHistoryOutput> {
 		this._pubnub = options.pubnub;
+		this._historyFetchCallback = options.historyFetchCallback;
 		if (options.debug) {
 			this._debug = options.debug;
 		}
@@ -47,7 +52,7 @@ export class PubnubHistory {
 		do {
 			channels = options.channels.slice(startSlice, sliceSize);
 			if (channels.length > 0) {
-				if (await this.fetchByChannelSlice(channels, options.since)) {
+				if (await this.fetchByChannelSlice(channels, options)) {
 					this.processMessages();
 					startSlice += sliceSize;
 				} else {
@@ -64,13 +69,17 @@ export class PubnubHistory {
 	}
 
 	// fetch historical messages for a slice of 500 channels
-	private async fetchByChannelSlice(channels: string[], since: number): Promise<boolean> {
+	private async fetchByChannelSlice(
+		channels: string[],
+		options: PubnubHistoryInput
+	): Promise<boolean> {
+		const { since } = options;
 		const timetoken = this.timestampToTimetokenStringified(since);
 		try {
-			await this.retrieveBatchHistory(channels, timetoken);
+			await this.retrieveBatchHistory(channels, timetoken, options);
 		} catch (error) {
 			// if we reached a "RESET" condition, break out and inform the client, we'll proceed no further
-			if (error === "RESET") {
+			if (error instanceof Error && error.message === "RESET") {
 				return false;
 			} else {
 				throw error;
@@ -98,8 +107,22 @@ export class PubnubHistory {
 	}
 
 	// retrieve historical messages in batch
-	private async retrieveBatchHistory(channels: string[], timetoken: string) {
+	private async retrieveBatchHistory(
+		channels: string[],
+		timetoken: string,
+		options: PubnubHistoryInput
+	) {
+		const { reason, cla } = options;
 		this._debug(`Calling Pubnub.fetchMessages from ${timetoken} for ${channels.join(",")}`);
+		if (this._historyFetchCallback) {
+			this._historyFetchCallback({
+				channels: channels.join(","),
+				before: "",
+				after: timetoken,
+				reason,
+				cla
+			});
+		}
 		const response: any = await (this._pubnub! as any).fetchMessages({
 			channels,
 			end: timetoken,
@@ -136,7 +159,8 @@ export class PubnubHistory {
 				await this.retrieveChannelHistory(
 					channel,
 					earliestTimetokenPerChannel[channel] - 1,
-					timetoken
+					timetoken,
+					options
 				);
 			})
 		);
@@ -149,12 +173,23 @@ export class PubnubHistory {
 		channel: string,
 		before: number,
 		after: string,
+		options: PubnubHistoryInput,
 		depth: number = 0
 	) {
+		const { reason, cla } = options;
 		if (depth === 10) {
 			throw new Error("RESET");
 		}
 		this._debug(`Calling Pubnub.history from ${after} to ${before} for ${channel}`);
+		if (this._historyFetchCallback) {
+			this._historyFetchCallback({
+				channels: channel,
+				before: before.toString(),
+				after,
+				reason,
+				cla
+			});
+		}
 		const response: any = await (this._pubnub! as any).history({
 			channel,
 			start: before.toString(),
@@ -177,6 +212,7 @@ export class PubnubHistory {
 				channel,
 				parseInt(response.startTimeToken!, 10),
 				after,
+				options,
 				depth + 1
 			);
 		}

@@ -29,7 +29,8 @@ import {
 	CSMe,
 	CSPost,
 	CSReview,
-	CodemarkStatus
+	CodemarkStatus,
+	CSCodeError
 } from "@codestream/protocols/api";
 import { HostApi } from "../webview-api";
 import { FollowCodemarkRequestType } from "@codestream/protocols/agent";
@@ -67,7 +68,8 @@ import {
 	setCurrentCodemark,
 	repositionCodemark,
 	setCurrentReview,
-	setCurrentPullRequest
+	setCurrentPullRequest,
+	setCurrentCodeError
 } from "../store/context/actions";
 import { RelatedCodemark } from "./RelatedCodemark";
 import { addDocumentMarker } from "../store/documentMarkers/actions";
@@ -75,7 +77,8 @@ import { Link } from "./Link";
 import { getDocumentFromMarker } from "./api-functions";
 import { SharingModal } from "./SharingModal";
 import { getReview } from "../store/reviews/reducer";
-import { DropdownButton } from "./Review/DropdownButton";
+import { getCodeError } from "../store/codeErrors/reducer";
+import { DropdownButton } from "./DropdownButton";
 import { isFeatureEnabled } from "../store/apiVersioning/reducer";
 import { HeadshotName } from "../src/components/HeadshotName";
 import { PRCodeCommentPatch } from "./PullRequestComponents";
@@ -111,6 +114,7 @@ interface DispatchProps {
 	addCodemarks: typeof addCodemarks;
 	setCurrentReview: typeof setCurrentReview;
 	setCurrentPullRequest: typeof setCurrentPullRequest;
+	setCurrentCodeError: typeof setCurrentCodeError;
 }
 
 interface ConnectedProps {
@@ -134,6 +138,7 @@ interface ConnectedProps {
 	currentMarkerId?: string;
 	isRepositioning?: boolean;
 	review?: CSReview;
+	codeError?: CSCodeError;
 	post?: CSPost;
 	moveMarkersEnabled: boolean;
 	unread: boolean;
@@ -142,13 +147,13 @@ interface ConnectedProps {
 export type DisplayType = "default" | "collapsed" | "activity";
 
 interface InheritedProps {
-	contextName?: "Spatial View" | "Codemarks Tab" | "Sidebar";
+	contextName?: "Spatial View" | "Codemarks Tab" | "Sidebar" | "Activity Panel";
 	displayType?: DisplayType;
 	selected?: boolean;
 	codemark?: CodemarkPlus;
-	marker: DocumentMarker | MarkerNotLocated;
+	marker?: DocumentMarker | MarkerNotLocated;
 	postAction?(...args: any[]): any;
-	action(action: string, post: any, args: any): any;
+	action?(action: string, post: any, args: any): any;
 	onClick?(event: React.SyntheticEvent, marker: DocumentMarker | MarkerNotLocated): any;
 	highlightCodeInTextEditor?: boolean;
 	query?: string;
@@ -526,7 +531,9 @@ export class Codemark extends React.Component<Props, State> {
 	submitReply = text => {
 		const { action, codemark } = this.props;
 		const forceThreadId = codemark!.parentPostId || codemark!.postId;
-		action("submit-post", null, { forceStreamId: codemark!.streamId, forceThreadId, text });
+		if (action) {
+			action("submit-post", null, { forceStreamId: codemark!.streamId, forceThreadId, text });
+		}
 	};
 
 	renderStatus(codemark, menuItems = [] as any[]) {
@@ -631,7 +638,7 @@ export class Codemark extends React.Component<Props, State> {
 			});
 		}
 
-		if (this.props.onClick) {
+		if (this.props.onClick && this.props.marker) {
 			this.props.onClick(event, this.props.marker);
 		} else {
 			if (!this.props.selected && this.props.codemark)
@@ -906,7 +913,7 @@ export class Codemark extends React.Component<Props, State> {
 
 		// it's a document marker without a codemark
 		if (!codemark) {
-			if (this.props.marker.externalContent) return this.renderCollapsedFromExternalContent();
+			if (this.props.marker?.externalContent) return this.renderCollapsedFromExternalContent();
 			return null;
 		}
 
@@ -1307,7 +1314,7 @@ export class Codemark extends React.Component<Props, State> {
 		const { menuOpen, menuTarget, isInjecting } = this.state;
 
 		if (!codemark) {
-			if (this.props.marker.externalContent) return this.renderFromExternalContent();
+			if (this.props.marker?.externalContent) return this.renderFromExternalContent();
 			return null;
 		}
 
@@ -1577,6 +1584,7 @@ export class Codemark extends React.Component<Props, State> {
 								ref={this.permalinkRef}
 								value={codemark.permalink}
 								style={{ position: "absolute", left: "-9999px" }}
+								readOnly={true}
 							/>
 						)}
 						<div
@@ -1630,6 +1638,23 @@ export class Codemark extends React.Component<Props, State> {
 										</div>
 									</div>
 								)}
+								{this.props.codeError != null && (
+									<div className="related">
+										<div className="related-label">Error Group</div>
+										<div className="description-body">
+											<Link
+												className="external-link"
+												onClick={() => {
+													this.props.setCurrentCodemark();
+													this.props.setCurrentCodeError(this.props.codeError!.id);
+												}}
+											>
+												<Icon name="review" />
+												{this.props.codeError.title}
+											</Link>
+										</div>
+									</div>
+								)}
 								{this.renderTagsAndAssigneesSelected(codemark)}
 								{this.props.post && <Attachments post={this.props.post} />}
 								{description && (
@@ -1671,7 +1696,7 @@ export class Codemark extends React.Component<Props, State> {
 
 	renderFromExternalContent() {
 		const { hidden, selected, author, marker } = this.props;
-		const externalContent = marker.externalContent!;
+		const externalContent = marker?.externalContent!;
 		const providerName = externalContent.provider.name;
 		// FIXME better id lookup (we only support GH here)
 		const providerId = providerName === "GitHub" ? "github*com" : undefined;
@@ -1713,7 +1738,7 @@ export class Codemark extends React.Component<Props, State> {
 								<span className="verb">commented on {pullOrMergeRequestText} request </span>
 								{externalContent.title}{" "}
 								<span className="verb subtle">{externalContent.subhead}</span>
-								<Timestamp relative time={marker.createdAt} />
+								{marker && <Timestamp relative time={marker?.createdAt} />}
 							</div>
 							{/* <div className="right">
 								<span onClick={this.handleMenuClick}>
@@ -1726,15 +1751,15 @@ export class Codemark extends React.Component<Props, State> {
 								style={{ position: "absolute", top: "5px", right: "5px" }}
 								onClick={this.handleMenuClick}
 							></div> */}
-						{externalContent.diffHunk && this.state.showDiffHunk && (
+						{externalContent.diffHunk && this.state.showDiffHunk && marker?.file && (
 							<PRCodeCommentPatch>
-								<PullRequestPatch patch={externalContent.diffHunk} filename={marker.file} />
+								<PullRequestPatch patch={externalContent.diffHunk} filename={marker?.file} />
 							</PRCodeCommentPatch>
 						)}
-						<MarkdownText text={marker.summary} inline={true} />
+						<MarkdownText text={marker?.summary || ""} inline={true} />
 						{!selected && this.renderPinnedReplies()}
 						{!selected && this.renderDetailIcons(marker)}
-						{((marker.externalContent!.actions || emptyArray).length > 0 ||
+						{((marker?.externalContent!.actions || emptyArray).length > 0 ||
 							externalContent.diffHunk ||
 							externalContent.externalId) && (
 							<div style={{ marginTop: "10px" }}>
@@ -1767,7 +1792,7 @@ export class Codemark extends React.Component<Props, State> {
 									</span>
 								)}
 
-								{(marker.externalContent!.actions || emptyArray).map(action => (
+								{(marker?.externalContent?.actions || emptyArray).map(action => (
 									<span key={action.uri} style={{ marginRight: "10px" }}>
 										<span style={{ marginRight: "5px" }}>
 											<Icon name={action.icon || "link-external"} />
@@ -1828,7 +1853,7 @@ export class Codemark extends React.Component<Props, State> {
 
 	renderCollapsedFromExternalContent() {
 		const { marker } = this.props;
-		const externalContent = marker.externalContent!;
+		const externalContent = marker?.externalContent!;
 		const providerName = externalContent.provider.name;
 		// FIXME better id lookup (we only support GH here)
 		const providerId = providerName === "GitHub" ? "github*com" : undefined;
@@ -1872,10 +1897,10 @@ export class Codemark extends React.Component<Props, State> {
 				<div className="contents">
 					<div className="body" style={{ display: "flex", alignItems: "flex-start" }}>
 						<span style={{ flexGrow: 0, flexShrink: 0 }} className="gray">
-							{this.renderTypeIcon(marker["type"])}
+							{this.renderTypeIcon(marker ? ["type"] : "")}
 						</span>
 						<div>
-							<MarkdownText text={marker.summary} inline={true} />
+							<MarkdownText text={marker?.summary || ""} inline={true} />
 							{lines && (
 								<span style={{ paddingLeft: "15px", opacity: 0.75 }} className="subtle">
 									{lines}
@@ -1996,24 +2021,30 @@ export class Codemark extends React.Component<Props, State> {
 					<li>
 						Codemarks are <b>branch-agnostic</b>. That means this codemark will appear "in the right
 						place" even for your teammates who are checked out to a different version of this file.{" "}
-						<a href="https://docs.codestream.com/userguide/workflow/discuss-code/">learn more</a>
+						<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
+							learn more
+						</a>
 					</li>
 					<li>
 						Codemarks <b>move with the code</b>, so your conversation remains connected to the right
 						code block even as your code changes.{" "}
-						<a href="https://docs.codestream.com/userguide/workflow/discuss-code/">
+						<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
 							learn about comment drift
 						</a>
 					</li>
 					<li>
 						Codemarks <b>can be managed</b> by archiving or deleting them if they're no longer
 						relevant.{" "}
-						<a href="https://docs.codestream.com/userguide/workflow/discuss-code/">see how</a>
+						<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
+							see how
+						</a>
 					</li>
 					<li>
 						<b>Replies can be promoted</b> with a <Icon name="star" /> so the best answer surfaces
 						to the top, like in stack overflow.{" "}
-						<a href="https://docs.codestream.com/userguide/workflow/discuss-code/">see how</a>
+						<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
+							see how
+						</a>
 					</li>
 				</ul>
 			</div>
@@ -2110,7 +2141,7 @@ const mapStateToProps = (state: CodeStreamState, props: InheritedProps): Connect
 			return getUserByCsId(users, codemark.creatorId);
 		}
 
-		if (marker.externalContent != undefined) {
+		if (marker?.externalContent != undefined) {
 			return {
 				username: marker.creatorName,
 				avatar: { image: marker.externalContent.provider.name },
@@ -2125,10 +2156,16 @@ const mapStateToProps = (state: CodeStreamState, props: InheritedProps): Connect
 			? getReview(state.reviews, codemark.reviewId)
 			: undefined;
 
+	const codeError =
+		codemark != null && codemark.codeErrorId != null
+			? getCodeError(state.codeErrors, codemark.codeErrorId)
+			: undefined;
+
 	const unread = isUnread(state, codemark!);
 	return {
 		post,
 		review,
+		codeError,
 		capabilities: capabilities,
 		editorHasFocus: context.hasFocus,
 		jumpToMarkerId: context.currentMarkerId,
@@ -2170,7 +2207,8 @@ export default connect(
 		addCodemarks,
 		createPost,
 		setCurrentReview,
-		setCurrentPullRequest
+		setCurrentPullRequest,
+		setCurrentCodeError
 	}
 	// @ts-ignore
 )(Codemark);

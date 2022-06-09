@@ -10,9 +10,9 @@ git clone https://github.com/TeamCodeStream/codestream.git
 
 Versions
 
-- [Git](https://git-scm.com/), 2.17.1
-- [NodeJS](https://nodejs.org/en/), 10.15.3 (Nov 2019)
-- [npm](https://npmjs.com/), 6.11.3 (Dec 2019)
+- [Git](https://git-scm.com/), 2.32.0
+- [NodeJS](https://nodejs.org/en/), 16.13.2
+- [npm](https://npmjs.com/), 8.1.2
 
 ### Before you begin...
 
@@ -173,7 +173,7 @@ npm run pack
 
 #### Using VSCode
 
-1. Open the `vscode-codestream` repository folder
+1. Open the `codestream.code-workspace` workspace file
 2. Choose the `Launch CodeStream` launch configuration from the launch dropdown in the Debug dropdown and press `F5`.
 
 #### To set breakpoints
@@ -299,7 +299,7 @@ Typically I develop/debug against prod (so I open a folder or something other th
 
 #### Debug logs
 
-https://docs.codestream.com/userguide/faq/client-logs/
+https://docs.newrelic.com/docs/codestream/troubleshooting/client-logs/
 
 ### Learning the codebase
 

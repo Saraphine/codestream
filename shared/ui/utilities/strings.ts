@@ -37,3 +37,13 @@ export function pluralize(
 		return listOrNumber?.nodes?.length == 1 ? singularWord : `${singularWord}s`;
 	}
 }
+
+const shaRegExp = /^[a-f0-9]{40}$/i;
+export const isSha = (ref: string | undefined) => {
+	return ref && shaRegExp.test(ref);
+};
+
+export function isWordy(value: string): boolean {
+	// blacklist chars %<>^$:/ and 'space'
+	return /^[^%<>^$:\/ ]+$/.test(value);
+}

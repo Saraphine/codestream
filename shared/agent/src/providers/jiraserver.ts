@@ -8,6 +8,8 @@ import { Logger } from "../logger";
 import {
 	CreateJiraCardRequest,
 	CreateThirdPartyCardRequest,
+	FetchAssignableUsersAutocompleteRequest,
+	FetchAssignableUsersResponse,
 	FetchThirdPartyBoardsRequest,
 	FetchThirdPartyBoardsResponse,
 	FetchThirdPartyCardsRequest,
@@ -20,6 +22,7 @@ import {
 	MoveThirdPartyCardRequest,
 	ProviderConfigurationData,
 	ReportingMessageType,
+	ThirdPartyDisconnect,
 	ThirdPartyProviderCard,
 	ThirdPartyProviderConfig
 } from "../protocol/agent.protocol";
@@ -27,6 +30,18 @@ import { CSJiraServerProviderInfo } from "../protocol/api.protocol";
 import { CodeStreamSession } from "../session";
 import { Iterables, log, lspProvider } from "../system";
 import { makeCardFromJira } from "./jira";
+import {
+	CardSearchResponse,
+	CreateJiraIssueResponse,
+	IssueType,
+	IssueTypeDescriptor,
+	IssueTypeDetails,
+	IssueTypeFields,
+	JiraPaginateValues,
+	JiraProject,
+	JiraProjectsMetaResponse,
+	JiraServerOauthParams
+} from "./jiraserver.types";
 import { ThirdPartyIssueProviderBase } from "./provider";
 
 export type jsonCallback = (
@@ -102,44 +117,6 @@ class OAuthExtended extends OAuth {
 	}
 }
 
-interface JiraServerOauthParams {
-	consumerKey: string;
-	privateKey: string;
-}
-
-interface JiraProject {
-	id: string;
-	name: string;
-	key: string;
-}
-
-interface IssueTypeDescriptor {
-	name: string;
-	iconUrl: string;
-	fields: { [name: string]: { required: boolean; hasDefaultValue: boolean } };
-}
-
-interface JiraProjectMeta extends JiraProject {
-	issuetypes: IssueTypeDescriptor[];
-}
-
-interface JiraProjectsMetaResponse {
-	projects: JiraProjectMeta[];
-}
-
-interface CreateJiraIssueResponse {
-	id: string;
-	key: string;
-	self: string;
-}
-
-interface CardSearchResponse {
-	issues: JiraCard[];
-	nextPage?: string;
-	isLast: boolean;
-	total: number;
-}
-
 @lspProvider("jiraserver")
 export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServerProviderInfo> {
 	private boards: JiraBoard[] = [];
@@ -190,20 +167,17 @@ export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServer
 		}
 	}
 
-	async onDisconnected() {
+	async onDisconnected(request?: ThirdPartyDisconnect) {
 		this.boards = [];
+		return super.onDisconnected(request);
 	}
 
-	@log()
-	async configure(request: ProviderConfigurationData) {
-		await this.session.api.setThirdPartyProviderToken({
-			providerId: this.providerConfig.id,
-			token: request.token,
-			data: {
-				baseUrl: request.baseUrl
-			}
-		});
-		this.session.updateProviders();
+	canConfigure() {
+		return true;
+	}
+
+	async verifyConnection(config: ProviderConfigurationData): Promise<void> {
+		await this._getJira("/rest/api/2/mypermissions");
 	}
 
 	get baseUrl() {
@@ -230,11 +204,38 @@ export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServer
 				this._providerInfo!.accessToken,
 				this._providerInfo!.oauthTokenSecret,
 				(error, result) => {
-					if (error) reject(error);
-					else resolve(result);
+					if (error) {
+						reject(error);
+					} else {
+						resolve(result);
+					}
 				}
 			);
 		});
+	}
+
+	async _getJiraPaged<R extends object>(path: string): Promise<R[]> {
+		const basePath = path.includes("?") ? path.split("?")[0] : path;
+		let nextPage: string | undefined = path;
+		const values: R[] = [];
+		while (nextPage !== undefined) {
+			const response: JiraPaginateValues<R> = await this._getJira<R>(nextPage);
+			if (response.values && response.values.length > 0) {
+				values.push(...response.values);
+			}
+			Logger.debug(`Jira server paged: is last page? ${response.isLast}`);
+			if (!response.isLast) {
+				const existingParams = path.includes("?") ? qs.parse(path.split("?")[1]) : {};
+				nextPage = `${basePath}?${qs.stringify({
+					...existingParams,
+					startAt: (response.startAt + response.maxResults).toString(10)
+				})}`;
+			} else {
+				Logger.debug("Jira: there are no more pages");
+				nextPage = undefined;
+			}
+		}
+		return values;
 	}
 
 	async _getJira<R extends object>(path: string): Promise<any> {
@@ -258,11 +259,11 @@ export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServer
 	@log()
 	async getBoards(request: FetchThirdPartyBoardsRequest): Promise<FetchThirdPartyBoardsResponse> {
 		if (this.boards.length > 0) return { boards: this.boards };
-		await this.ensureConnected();
 		try {
 			this.boards = [];
 			const response: JiraProject[] = await this._getJira<JiraProject[]>("/rest/api/2/project");
 			this.boards.push(...(await this.filterBoards(response)));
+			Logger.debug(`Jira Server: got ${this.boards.length} projects`);
 			return { boards: this.boards };
 		} catch (error) {
 			debugger;
@@ -277,16 +278,39 @@ export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServer
 		}
 	}
 
+	private async gatherProjectMetadata(projects: JiraProject[]): Promise<JiraProjectsMetaResponse> {
+		const jiraProjectsFieldDetails: JiraProjectsMetaResponse = { projects: [] };
+		for (const project of projects) {
+			const issueTypesResponse: IssueType[] = await this._getJiraPaged(
+				`/rest/api/2/issue/createmeta/${project.id}/issuetypes`
+			);
+
+			const issueTypes: IssueTypeDescriptor[] = [];
+
+			jiraProjectsFieldDetails.projects.push({
+				...project,
+				issueTypes
+			});
+
+			for (const issueType of issueTypesResponse) {
+				const issueTypeDetails: IssueTypeDetails[] = await this._getJiraPaged(
+					`/rest/api/2/issue/createmeta/${project.id}/issuetypes/${issueType.id}`
+				);
+				const fields: IssueTypeFields = {};
+				for (const field of issueTypeDetails) {
+					fields[field.name] = { ...field };
+				}
+
+				issueTypes.push({ ...issueType, fields });
+			}
+		}
+		return jiraProjectsFieldDetails;
+	}
+
 	private async filterBoards(projects: JiraProject[]): Promise<JiraBoard[]> {
 		Logger.debug("Jira Server: Filtering for compatible projects");
 		try {
-			const response = await this._getJira(
-				`/rest/api/2/issue/createmeta?${qs.stringify({
-					projectIds: projects.map(p => p.id).join(","),
-					expand: "projects.issuetypes.fields"
-				})}`
-			);
-			return this.getCompatibleBoards(response);
+			return this.getCompatibleBoards(await this.gatherProjectMetadata(projects));
 		} catch (error) {
 			Container.instance().errorReporter.reportMessage({
 				type: ReportingMessageType.Error,
@@ -312,25 +336,25 @@ export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServer
 			};
 
 			const issueTypes = Array.from(
-				Iterables.filterMap(project.issuetypes, type => {
-					if (type.fields.summary && type.fields.description) {
+				Iterables.filterMap(project.issueTypes, type => {
+					if (type.fields.Summary && type.fields.Description) {
 						const hasOtherRequiredFields = Object.entries(type.fields).find(
 							([name, attributes]) =>
-								name !== "summary" &&
-								name !== "description" &&
-								name !== "issuetype" &&
-								name !== "project" &&
-								name !== "reporter" &&
+								name !== "Summary" &&
+								name !== "Description" &&
+								name !== "Issue Type" &&
+								name !== "Project" &&
+								name !== "Reporter" &&
 								attributes.required &&
 								!attributes.hasDefaultValue
 						);
 
 						board.issueTypeIcons[type.name] = type.iconUrl;
 
-						if (type.fields.assignee === undefined) {
+						if (type.fields.Assignee === undefined) {
 							board.assigneesDisabled = true;
 						} else {
-							board.assigneesRequired = type.fields.assignee.required;
+							board.assigneesRequired = type.fields.Assignee.required;
 						}
 						return hasOtherRequiredFields ? undefined : type.name;
 					}
@@ -481,7 +505,7 @@ export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServer
 	// apparently there's no way to get more than 1000 users
 	// https://community.atlassian.com/t5/Jira-questions/Paging-is-broken-for-user-search-queries/qaq-p/712071
 	@log()
-	async getAssignableUsers(request: { boardId: string }) {
+	async getAssignableUsers(request: { boardId: string }): Promise<FetchAssignableUsersResponse> {
 		const board = (this.boards || []).find(board => board.id === request.boardId);
 		if (!board) {
 			return { users: [] };
@@ -490,6 +514,24 @@ export class JiraServerProvider extends ThirdPartyIssueProviderBase<CSJiraServer
 			`/rest/api/2/user/assignable/search?${qs.stringify({
 				project: board.key,
 				maxResults: 1000
+			})}`
+		)) as JiraUser[];
+		return { users: result.map(u => ({ ...u, id: u.accountId })) };
+	}
+
+	@log()
+	async getAssignableUsersAutocomplete(
+		request: FetchAssignableUsersAutocompleteRequest
+	): Promise<FetchAssignableUsersResponse> {
+		const board = (this.boards || []).find(board => board.id === request.boardId);
+		if (!board) {
+			return { users: [] };
+		}
+		const result = (await this._getJira(
+			`/rest/api/2/user/assignable/search?${qs.stringify({
+				username: request.search,
+				project: board.key,
+				maxResults: 50
 			})}`
 		)) as JiraUser[];
 		return { users: result.map(u => ({ ...u, id: u.accountId })) };

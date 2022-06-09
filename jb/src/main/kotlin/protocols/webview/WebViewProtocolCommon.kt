@@ -48,6 +48,7 @@ class EditorContext(
 class EditorInformation(
     val fileName: String?,
     val uri: String?,
+    val sha: String?,
     val metrics: EditorMetrics?,
     val selections: List<EditorSelection>?,
     val visibleRanges: List<Range>?,

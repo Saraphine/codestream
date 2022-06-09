@@ -6,7 +6,8 @@ import {
 	CSLocationArray,
 	CSMarker,
 	CSMarkerLocation,
-	CSMarkerLocations
+	CSMarkerLocations,
+	CSPost
 } from "./api.protocol";
 
 export interface CreateMarkerLocationRequest {
@@ -45,6 +46,7 @@ export interface FetchMarkersResponse {
 	markers: CSMarker[];
 	markerLocations: CSMarkerLocation[];
 	codemarks: CSCodemark[];
+	posts: CSPost[];
 }
 
 export const FetchMarkersRequestType = new RequestType<

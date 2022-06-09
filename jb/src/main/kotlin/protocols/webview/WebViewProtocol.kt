@@ -1,7 +1,12 @@
 package com.codestream.protocols.webview
 
 import com.codestream.protocols.CodemarkType
+import com.codestream.protocols.agent.CSRepo
+import com.codestream.protocols.agent.FileLevelTelemetryOptions
+import com.codestream.protocols.agent.PixieDynamicLoggingFunctionParameter
+import com.google.gson.JsonObject
 import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.TextDocumentIdentifier
 
 interface WebViewNotification {
     fun getMethod(): String
@@ -11,6 +16,7 @@ object EditorNotifications {
 
     class DidChangeVisibleRanges(
         val uri: String?,
+        val gitSha: String?,
         val selections: List<EditorSelection>,
         val visibleRanges: List<Range>,
         val lineCount: Number
@@ -20,6 +26,7 @@ object EditorNotifications {
 
     class DidChangeSelection(
         val uri: String?,
+        val gitSha: String?,
         val selections: List<EditorSelection>?,
         val visibleRanges: List<Range>?,
         val lineCount: Number
@@ -102,6 +109,13 @@ object PullRequestNotifications {
     ) : WebViewNotification {
         override fun getMethod() = "webview/pullRequest/show"
     }
+
+    class HandleDirectives(
+        val pullRequest: JsonObject?,
+        val directives: JsonObject?
+    ) : WebViewNotification {
+        override fun getMethod() = "webview/pullRequest/handleDirectives"
+    }
 }
 
 object StreamNotifications {
@@ -135,4 +149,56 @@ class DidChangeApiVersionCompatibility : WebViewNotification {
 
 class DidLogout() : WebViewNotification {
     override fun getMethod(): String = "webview/didLogout"
+}
+
+object PixieNotifications {
+    class DynamicLogging(
+        val functionName: String,
+        val functionParameters: List<PixieDynamicLoggingFunctionParameter>,
+        val functionReceiver: String?,
+        val packageName: String
+    ) : WebViewNotification {
+        override fun getMethod(): String = "webview/pixie/dynamicLogging"
+    }
+}
+
+object MethodLevelTelemetryNotifications {
+    class View(
+        val error: Any?,
+        val repo: CSRepo,
+        val codeNamespace: String?,
+        val filePath: String,
+        val relativeFilePath: String?,
+        val languageId: String,
+        val range: Range?,
+        val functionName: String?,
+        val newRelicAccountId: Int?,
+        val newRelicEntityGuid: String?,
+        val methodLevelTelemetryRequestOptions: FileLevelTelemetryOptions?,
+        val metricTimesliceNameMapping: MetricTimesliceNameMapping?
+    ) : WebViewNotification {
+        override fun getMethod(): String = "webview/mlt/view"
+
+        class MetricTimesliceNameMapping(
+            val d: String?,
+            val t: String?,
+            val e: String?
+        )
+    }
+}
+
+object ShowProgressIndicator {
+    class Start(
+        val progressStatus: Boolean = true
+    ) : WebViewNotification {
+        override fun getMethod() = "webview/system/progressIndicator"
+    }
+}
+
+object DocumentMarkerNotifications {
+    class DidChange(
+        val textDocument: TextDocumentIdentifier
+    ) : WebViewNotification {
+        override fun getMethod(): String = "codestream/didChangeDocumentMarkers"
+    }
 }

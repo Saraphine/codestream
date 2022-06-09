@@ -477,7 +477,7 @@ export const PresentTOS = () => {
 						onChange={() => setInAgreement(!inAgreement)}
 					>
 						I agree to the above terms of service and{" "}
-						<Link href="https://codestream.com/privacy">Privacy Policy</Link>
+						<Link href="https://newrelic.com/termsandconditions/privacy">Privacy Notice</Link>
 					</Checkbox>
 				) : (
 					<PleaseScrollMore>

@@ -144,15 +144,16 @@ export interface CommandOptions {
 	 * The encoding to use when writing to stdin, if the stdin
 	 * parameter is a string.
 	 */
-	readonly stdinEncoding?: string;
+	readonly stdinEncoding?: BufferEncoding;
 	/**
 	 * If true, errors won't be logged
 	 */
 	readonly throwRawExceptions?: boolean;
+	readonly timeout?: number;
 }
 
 export function runCommand(command: string, args: any[], options: CommandOptions = {}) {
-	const { stdin, stdinEncoding, ...opts } = {
+	const { stdin, stdinEncoding, ...opts }: CommandOptions = {
 		maxBuffer: 100 * 1024 * 1024,
 		...options
 	} as CommandOptions;
@@ -194,7 +195,7 @@ export function runCommand(command: string, args: any[], options: CommandOptions
 		ignoreClosedInputStream(proc);
 
 		if (stdin) {
-			proc.stdin.end(stdin, stdinEncoding || "utf8");
+			proc.stdin?.end(stdin, stdinEncoding || "utf8");
 		}
 	});
 }
@@ -220,7 +221,7 @@ export function runCommand(command: string, args: any[], options: CommandOptions
  * happen if you for example pass badly formed input to apply-patch.
  */
 function ignoreClosedInputStream(process: ChildProcess) {
-	process.stdin.on("error", err => {
+	process.stdin?.on("error", err => {
 		const errWithCode = err as ErrorWithCode;
 
 		// Is the error one that we'd expect from the input stream being
@@ -234,7 +235,7 @@ function ignoreClosedInputStream(process: ChildProcess) {
 			//
 			// "For all EventEmitter objects, if an 'error' event handler is not
 			//  provided, the error will be thrown"
-			if (process.stdin.listeners("error").length > 1) {
+			if (process.stdin?.listeners && process.stdin?.listeners("error").length > 1) {
 				throw err;
 			}
 		}

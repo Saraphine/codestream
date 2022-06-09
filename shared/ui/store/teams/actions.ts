@@ -1,7 +1,11 @@
 import { CSTeam } from "@codestream/protocols/api";
 import { action } from "../common";
 import { TeamsActionsType } from "./types";
-import { CreateTeamRequest, CreateTeamRequestType } from "@codestream/protocols/agent";
+import {
+	CreateTeamRequest,
+	CreateTeamRequestType,
+	UpdateTeamSettingsRequestType
+} from "@codestream/protocols/agent";
 import { HostApi } from "../..";
 import { addCompanies } from "../companies/actions";
 import { addStreams } from "../streams/actions";

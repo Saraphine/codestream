@@ -10,7 +10,7 @@ import { Link } from "../../Link";
 import { CommandLineInstructions } from "./CommandLineInstructions";
 import styled from "styled-components";
 import { PullRequestReactions } from "./PullRequestReactions";
-import { DropdownButton } from "../../Review/DropdownButton";
+import { DropdownButton } from "../../DropdownButton";
 
 export const Root = styled.div`
 	margin: 0 20px 15px 20px;

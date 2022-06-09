@@ -80,6 +80,10 @@ export class StatusBarController implements Disposable {
 		}
 	}
 
+	update() {
+		this.updateStatusBar(Container.session.status);
+	}
+
 	private updateStatusBar(
 		status: SessionStatus,
 		unreads: { totalMentions: number; totalUnreads: number } = { totalMentions: 0, totalUnreads: 0 }
@@ -94,7 +98,11 @@ export class StatusBarController implements Disposable {
 
 		let env;
 		switch (Container.session.environment) {
+			// suppress additional environment message for production, or, once we have
+			// region support in place, for production regions
 			case CodeStreamEnvironment.Production:
+			case CodeStreamEnvironment.RegionEU:
+			case CodeStreamEnvironment.RegionUS:
 			case CodeStreamEnvironment.Unknown:
 				env = "";
 				break;
@@ -128,8 +136,8 @@ export class StatusBarController implements Disposable {
 				// let label = Container.session.user.name;
 				let label = `CodeStream: ${Container.session.user.name}`;
 				let tooltip = "Toggle CodeStream";
-				if (!Container.session.hasSingleTeam()) {
-					label += ` - ${Container.session.team.name}`;
+				if (!Container.session.hasSingleCompany()) {
+					label += ` - ${Container.session.company.name}`;
 				}
 				if (unreads.totalMentions > 0) {
 					label += ` (${unreads.totalMentions})`;

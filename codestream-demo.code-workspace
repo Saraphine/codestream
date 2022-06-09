@@ -1,0 +1,36 @@
+{
+	"folders": [
+		{
+			"path": "./vscode"
+		},
+		{
+			"path": "./shared/ui"
+		},
+		{
+			"path": "./shared/agent"
+		},
+		{
+			"path": "../gore"
+		},
+		{
+			"path": "../test-project-1"
+		}
+	],
+	"launch": {
+		"configurations": [],
+		"compounds": [
+			{
+				"name": "Launch CodeStream & Attach to Agent",
+				"configurations": ["Launch CodeStream", "Attach to Agent"]
+			}
+		]
+	},
+	"settings": {
+		"editor.insertSpaces": false,
+		"prettier.requireConfig": true,
+		"prettier.tslintIntegration": true,
+		"search.exclude": {
+			"**/dist": true
+		}
+	}
+}

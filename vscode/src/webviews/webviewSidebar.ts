@@ -24,7 +24,7 @@ import {
 	window,
 	WindowState
 } from "vscode";
-import { NotificationType, RequestType } from "vscode-jsonrpc";
+import { NotificationType, RequestType, ResponseError } from "vscode-jsonrpc";
 
 import { CodeStreamSession, StreamThread } from "../api/session";
 import { Container } from "../container";
@@ -117,7 +117,39 @@ export class CodeStreamWebviewSidebar implements WebviewLike, Disposable, Webvie
 				if (err) {
 					reject(err);
 				} else {
-					resolve(data);
+					let html = data.replace(
+						/{{root}}/g,
+						Uri.file(Container.context.asAbsolutePath("."))
+							.with({ scheme: "vscode-resource" })
+							.toString()
+					);
+					if (
+						Container.telemetryOptions &&
+						Container.telemetryOptions.browserIngestKey &&
+						Container.telemetryOptions.accountId &&
+						Container.telemetryOptions.webviewAppId &&
+						Container.telemetryOptions.webviewAgentId
+					) {
+						try {
+							const browserScript = Container.context.asAbsolutePath("dist/newrelic-browser.js");
+							if (browserScript) {
+								const browser = fs
+									.readFileSync(browserScript)
+									.toString()
+									.replace(/{{accountID}}/g, Container.telemetryOptions.accountId!)
+									.replace(/{{applicationID}}/g, Container.telemetryOptions.webviewAppId!)
+									.replace(/{{agentID}}/g, Container.telemetryOptions.webviewAgentId!)
+									.replace(/{{licenseKey}}/g, Container.telemetryOptions.browserIngestKey);
+								html = html.replace(
+									"<head>",
+									`<head><script type="text/javascript">${browser}</script>`
+								);
+							}
+						} catch (ex) {
+							Logger.log("NewRelic telemetry", { error: ex });
+						}
+					}
+					resolve(html);
 				}
 			});
 		});
@@ -422,7 +454,17 @@ export class CodeStreamWebviewSidebar implements WebviewLike, Disposable, Webvie
 	private sendIpcResponse(request: WebviewIpcRequestMessage, response: object): void;
 	private sendIpcResponse(request: WebviewIpcRequestMessage, response: Error | object): void {
 		this.postMessage(
-			response instanceof Error
+			response instanceof ResponseError
+				? {
+						id: request.id,
+						error: {
+							code: response.code,
+							message: response.message,
+							data: response.data,
+							stack: response.stack
+						}
+				  }
+				: response instanceof Error
 				? {
 						id: request.id,
 						error: response.message

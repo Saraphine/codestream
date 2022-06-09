@@ -4,6 +4,7 @@
 import { Agent as HttpsAgent } from "https";
 import HttpsProxyAgent from "https-proxy-agent";
 import Pubnub from "pubnub";
+import { inspect } from "util";
 import { Disposable } from "vscode-languageserver";
 // import { PubnubHistory, PubnubHistoryInput, PubnubHistoryOutput } from "./pubnubHistory";
 import {
@@ -12,12 +13,12 @@ import {
 	BroadcasterHistoryInput,
 	BroadcasterHistoryOutput,
 	BroadcasterStatusType,
+	HistoryFetchCallback,
 	MessageCallback,
 	MessageEvent,
 	StatusCallback
 } from "./broadcaster";
 import { PubnubHistory } from "./pubnubHistory";
-import { inspect } from "util";
 
 interface PubnubMessage {
 	timetoken: string;
@@ -45,6 +46,7 @@ export interface PubnubInitializer {
 	httpsAgent?: HttpsAgent | HttpsProxyAgent;
 	onMessage: MessageCallback;
 	onStatus: StatusCallback;
+	onFetchHistory?: HistoryFetchCallback;
 }
 
 // internal, maintains map of channels and whether they are yet successfully subscribed
@@ -62,6 +64,7 @@ export class PubnubConnection implements BroadcasterConnection {
 	private _logger: (msg: string, info?: any) => void = () => {};
 	private _messageCallback: MessageCallback | undefined;
 	private _statusCallback: StatusCallback | undefined;
+	private _historyFetchCallback: HistoryFetchCallback | undefined;
 	private _subscriptionMap: SubscriptionMap = {};
 
 	// initialize PubnubConnection and optionally subscribe to channels
@@ -78,13 +81,14 @@ export class PubnubConnection implements BroadcasterConnection {
 			subscribeKey: options.subscribeKey,
 			restore: true,
 			logVerbosity: false,
-			//heartbeatInterval: 30,
+			// heartbeatInterval: 30,
 			autoNetworkDetection: true,
 			proxy: options.httpsAgent instanceof HttpsProxyAgent && options.httpsAgent.proxy
 		} as Pubnub.PubnubConfig);
 
 		this._messageCallback = options.onMessage;
 		this._statusCallback = options.onStatus;
+		this._historyFetchCallback = options.onFetchHistory;
 		this.addListener();
 		this.startPinging();
 
@@ -194,17 +198,33 @@ export class PubnubConnection implements BroadcasterConnection {
 			status.category === Pubnub.CATEGORIES.PNAccessDeniedCategory
 		) {
 			// an access denied message, in direct response to a subscription attempt
-			let response;
-			try {
-				response = JSON.parse((status as any).errorData.response.text);
-			} catch (error) {
-				// this is really a total failsafe, but if we can't determine the payload
-				// for some reason, we assume the worst
-				this._debug("Could not parse AccessDenied response");
-				this.reset();
-				return;
+			const channels = status.errorData.payload.channels;
+			this._debug(`Access denied for channels: ${channels}`);
+			const criticalChannels: string[] = [];
+			const nonCriticalChannels: string[] = [];
+			// HACK: whether a channel is critical should be passed as an option and processed through the
+			// chain, but the changes to the code are too complicated ... this all needs a refactor anyway
+			status.errorData?.payload?.channels.forEach((channel: string) => {
+				if (channel.startsWith("object-")) {
+					nonCriticalChannels.push(channel);
+				} else {
+					criticalChannels.push(channel);
+				}
+			});
+
+			if (criticalChannels.length > 0) {
+				this._debug(`Access denied for critical channels: ${criticalChannels}`);
+				this.subscriptionFailure(criticalChannels);
 			}
-			this.subscriptionFailure(response.payload.channels || []);
+			if (nonCriticalChannels.length > 0) {
+				this.unsubscribe(nonCriticalChannels);
+				if (this._statusCallback) {
+					this._statusCallback!({
+						status: BroadcasterStatusType.NonCriticalFailure,
+						channels: nonCriticalChannels
+					});
+				}
+			}
 		} else if (
 			(status as any).error &&
 			(status.operation === Pubnub.OPERATIONS.PNHeartbeatOperation ||
@@ -245,6 +265,7 @@ export class PubnubConnection implements BroadcasterConnection {
 	fetchHistory(options: BroadcasterHistoryInput): Promise<BroadcasterHistoryOutput> {
 		return new PubnubHistory().fetchHistory({
 			pubnub: this._pubnub!,
+			historyFetchCallback: this._historyFetchCallback,
 			...options
 		});
 	}

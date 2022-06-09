@@ -1,4 +1,6 @@
 dist
+out
+.vscode-test
 src/protocols/
 webview.html
 node_modules
@@ -10,3 +12,6 @@ codestream-*.info
 .AppleDouble
 .LSOverride
 *~
+stats*.json
+stats-*.json
+newrelic_agent.log

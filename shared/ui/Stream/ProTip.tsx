@@ -25,7 +25,7 @@ const tips = [
 	<span>Created before yesterday: created:&lt;yesterday</span>,
 	<span>
 		Flag tech debt with tagged codemarks.{" "}
-		<a href="https://docs.codestream.com/userguide/features/creating-codemarks/#tags">See how.</a>
+		<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/#tagging">See how.</a>
 	</span>,
 	<span>Use permalinks to share pointers to code on other platforms such as JIRA.</span>,
 	<span>CodeStream's comments can include multiple ranges, even across repos.</span>,
@@ -34,10 +34,6 @@ const tips = [
 	</span>,
 	<span>Codemark content can be injected as an inline comment in your code.</span>,
 	// <span>Set keybindings for codemarks to jump to different code locations</span>,
-	<span>
-		Share your work-in-progress as you develop.{" "}
-		<a href="http://docs.codestream.com/userguide/features/myteam-section/">See how.</a>
-	</span>,
 	<span>Create a saved query by typing a search term and clicking the bookmark icon</span>,
 	<span>
 		Type

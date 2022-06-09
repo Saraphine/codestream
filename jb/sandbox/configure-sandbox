@@ -66,6 +66,9 @@ fi
 # 	/bin/rm $tmpfile
 # fi
 
+# Add absolute remotes
+echo git remote add private git@github.com:teamcodestream/codestream-private
+git remote add private git@github.com:teamcodestream/codestream-private
 
 # Add git hooks as needed
 if [ -d "$JB_TOP/hooks" ]; then

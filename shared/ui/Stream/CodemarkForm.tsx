@@ -24,7 +24,7 @@ import {
 } from "@codestream/protocols/api";
 import cx from "classnames";
 import * as paths from "path-browserify";
-import React from "react";
+import React, { SyntheticEvent } from "react";
 import { connect } from "react-redux";
 import Select from "react-select";
 import {
@@ -56,12 +56,17 @@ import {
 } from "@codestream/protocols/webview";
 import { getCurrentSelection } from "../store/editorContext/reducer";
 import Headshot from "./Headshot";
-import { getTeamMembers, getTeamTagsArray, getTeamMates } from "../store/users/reducer";
+import {
+	getTeamMembers,
+	getTeamTagsArray,
+	getTeamMates,
+	getActiveMemberIds
+} from "../store/users/reducer";
 import MessageInput, { AttachmentField } from "./MessageInput";
 import { getCurrentTeamProvider } from "../store/teams/reducer";
 import { getCodemark } from "../store/codemarks/reducer";
 import { CodemarksState } from "../store/codemarks/types";
-import { setCurrentStream } from "../store/context/actions";
+import { setCurrentStream, setCurrentPullRequestNeedsRefresh } from "../store/context/actions";
 import ContainerAtEditorLine from "./SpatialView/ContainerAtEditorLine";
 import ContainerAtEditorSelection from "./SpatialView/ContainerAtEditorSelection";
 import { prettyPrintOne } from "code-prettify";
@@ -79,12 +84,16 @@ import { FormattedMessage } from "react-intl";
 import { Link } from "./Link";
 import { confirmPopup } from "./Confirm";
 import { openPanel, openModal, setUserPreference, markItemRead } from "./actions";
+import { fetchCodeError, upgradePendingCodeError } from "../store/codeErrors/actions";
 import CancelButton from "./CancelButton";
 import { VideoLink } from "./Flow";
 import { PanelHeader } from "../src/components/PanelHeader";
 import { ReposState } from "../store/repos/types";
 import { getDocumentFromMarker } from "./api-functions";
 import { getPRLabel, LabelHash } from "../store/providers/reducer";
+import { contextType } from "react-gravatar";
+import { CodeErrorsState } from "../store/codeErrors/types";
+import { getPullRequestConversationsFromProvider } from "../store/providerPullRequests/actions";
 
 export interface ICrossPostIssueContext {
 	setSelectedAssignees(any: any): void;
@@ -103,7 +112,7 @@ interface Props extends ConnectedProps {
 	streamId: string;
 	collapseForm?: Function;
 	onSubmit: (attributes: NewCodemarkAttributes, event?: React.SyntheticEvent) => any;
-	onClickClose(e?: Event): any;
+	onClickClose(e?: SyntheticEvent): any;
 	openCodemarkForm?(type: string): any;
 	slackInfo?: {};
 	codeBlock?: GetRangeScmInfoResponse;
@@ -120,16 +129,22 @@ interface Props extends ConnectedProps {
 	error?: string;
 	openPanel: Function;
 	openModal: Function;
+	getPullRequestConversationsFromProvider: Function;
+	setCurrentPullRequestNeedsRefresh: Function;
 	setUserPreference: Function;
 	markItemRead(
 		...args: Parameters<typeof markItemRead>
 	): ReturnType<ReturnType<typeof markItemRead>>;
+	upgradePendingCodeError(
+		codeErrorId: string,
+		source: "Comment" | "Status Change" | "Assignee Change"
+	);
 }
 
 interface ConnectedProps {
 	teamMates: CSUser[];
 	teamMembers: CSUser[];
-	removedMemberIds: string[];
+	activeMemberIds: string[];
 	channelStreams: CSChannelStream[];
 	channel: CSStream;
 	issueProvider?: ThirdPartyProviderConfig;
@@ -142,6 +157,7 @@ interface ConnectedProps {
 	selectedStreams: {};
 	showChannels: string;
 	textEditorUri?: string;
+	textEditorGitSha?: string;
 	textEditorSelection?: EditorSelection;
 	teamProvider: "codestream" | "slack" | "msteams" | string;
 	teamTagsArray: any;
@@ -150,6 +166,7 @@ interface ConnectedProps {
 	shouldShare: boolean;
 	currentTeamId: string;
 	currentReviewId?: string;
+	currentCodeErrorId?: string;
 	isCurrentUserAdmin?: boolean;
 	blameMap?: { [email: string]: string };
 	activePanel?: WebviewPanels;
@@ -159,6 +176,7 @@ interface ConnectedProps {
 	textEditorUriHasPullRequestContext: boolean;
 	repos: ReposState;
 	prLabel: LabelHash;
+	codeErrors: CodeErrorsState;
 }
 
 interface State {
@@ -216,6 +234,7 @@ interface State {
 	changedPrLines: GetShaDiffsRangesResponse[];
 	isPreviewing?: boolean;
 	isDragging: number;
+	currentCodeErrorId?: string;
 }
 
 function merge(defaults: Partial<State>, codemark: CSCodemark): State {
@@ -370,7 +389,7 @@ class CodemarkForm extends React.Component<Props, State> {
 			}
 			this.handleScmChange();
 		} else if (!isEditing) {
-			const { textEditorSelection, textEditorUri } = this.props;
+			const { textEditorSelection, textEditorUri, textEditorGitSha } = this.props;
 			if (textEditorSelection && textEditorUri) {
 				// In case there isn't already a range selection by user, change the selection to be the line the cursor is on
 				const isEmpty = isRangeEmpty(textEditorSelection);
@@ -380,7 +399,7 @@ class CodemarkForm extends React.Component<Props, State> {
 				} else {
 					const range = isEmpty ? forceAsLine(textEditorSelection) : textEditorSelection;
 					if (isEmpty) this.selectRangeInEditor(textEditorUri, range);
-					this.getScmInfoForSelection(textEditorUri, range, () => {
+					this.getScmInfoForSelection(textEditorUri, range, textEditorGitSha, () => {
 						// if (multiLocation) this.setState({ addingLocation: true, liveLocation: 1 });
 						this.focus();
 					});
@@ -412,7 +431,7 @@ class CodemarkForm extends React.Component<Props, State> {
 	}
 
 	componentDidUpdate(prevProps: Props) {
-		const { isEditing, textEditorSelection, textEditorUri } = this.props;
+		const { isEditing, textEditorSelection, textEditorUri, textEditorGitSha } = this.props;
 
 		const commentType = this.getCommentType();
 
@@ -433,7 +452,11 @@ class CodemarkForm extends React.Component<Props, State> {
 			// only update if we have a live location
 			this.state.liveLocation >= 0
 		) {
-			this.getScmInfoForSelection(textEditorUri!, forceAsLine(textEditorSelection!));
+			this.getScmInfoForSelection(
+				textEditorUri!,
+				forceAsLine(textEditorSelection!),
+				textEditorGitSha
+			);
 			this.props.onDidChangeSelection && this.props.onDidChangeSelection(textEditorSelection!);
 			// this.setState({ addingLocation: false });
 		}
@@ -468,9 +491,15 @@ class CodemarkForm extends React.Component<Props, State> {
 		});
 	}
 
-	private async getScmInfoForSelection(uri: string, range: Range, callback?: Function) {
+	private async getScmInfoForSelection(
+		uri: string,
+		range: Range,
+		gitSha?: string,
+		callback?: Function
+	) {
 		const scmInfo = await HostApi.instance.send(GetRangeScmInfoRequestType, {
 			uri: uri,
+			gitSha: gitSha,
 			range: range,
 			dirty: true // should this be determined here? using true to be safe
 		});
@@ -527,9 +556,13 @@ class CodemarkForm extends React.Component<Props, State> {
 
 	// this doesn't appear to be used anywhere -Pez
 	handleSelectionChange = () => {
-		const { textEditorSelection, textEditorUri } = this.props;
+		const { textEditorSelection, textEditorUri, textEditorGitSha } = this.props;
 		if (textEditorSelection) {
-			this.getScmInfoForSelection(textEditorUri!, forceAsLine(textEditorSelection));
+			this.getScmInfoForSelection(
+				textEditorUri!,
+				forceAsLine(textEditorSelection),
+				textEditorGitSha
+			);
 		}
 	};
 
@@ -577,7 +610,7 @@ class CodemarkForm extends React.Component<Props, State> {
 
 	handleScmChange = () => {
 		const { codeBlocks } = this.state;
-		const { blameMap = {}, inviteUsersOnTheFly, removedMemberIds } = this.props;
+		const { blameMap = {}, inviteUsersOnTheFly, activeMemberIds } = this.props;
 
 		this.setState({ codeBlockInvalid: false });
 
@@ -610,7 +643,7 @@ class CodemarkForm extends React.Component<Props, State> {
 					});
 				} else if (author.id) {
 					// if it's a registered teammate who has not been explicitly removed from the team, mention them
-					if (!removedMemberIds.includes(author.id)) mentionAuthors.push(author);
+					if (activeMemberIds.includes(author.id)) mentionAuthors.push(author);
 				} else if (inviteUsersOnTheFly) {
 					// else offer to send the person an email
 					unregisteredAuthors.push(author);
@@ -832,6 +865,28 @@ class CodemarkForm extends React.Component<Props, State> {
 			}
 		}
 
+		if (this.props.currentCodeErrorId) {
+			try {
+				const codeErrorResponse = await this.props.upgradePendingCodeError(
+					this.props.currentCodeErrorId,
+					"Comment"
+				);
+				if (codeErrorResponse.wasPending) {
+					// if this codeError was pending, we know that we just created one, use the codeError
+					// that was created
+					parentPostId = codeErrorResponse.codeError.postId;
+				} else {
+					fetchCodeError(this.props.currentCodeErrorId);
+					const codeError = this.props.codeErrors.codeErrors[this.props.currentCodeErrorId];
+					parentPostId = codeError.postId;
+				}
+
+				//this.props.markItemRead(review.id, review.numReplies + 1);
+			} catch (error) {
+				// FIXME what do we do if we don't find the code error?
+			}
+		}
+
 		try {
 			const baseAttributes = {
 				codeBlocks,
@@ -982,7 +1037,9 @@ class CodemarkForm extends React.Component<Props, State> {
 			}
 		}
 
-		if (this.props.textEditorUriHasPullRequestContext) {
+		if (this.props.currentCodeErrorId) {
+			// do something cool?
+		} else if (this.props.textEditorUriHasPullRequestContext) {
 			// do something cool?
 		} else if (
 			!this.props.isEditing &&
@@ -1250,6 +1307,8 @@ class CodemarkForm extends React.Component<Props, State> {
 		if (this.state.isPreviewing) return null;
 		if (this.props.isEditing) return null;
 		if (this.props.currentReviewId) return null;
+		if (this.props.currentCodeErrorId) return null;
+
 		// don't show the sharing controls for these types of diffs
 		if (this.props.textEditorUri && this.props.textEditorUri.match("codestream-diff://-[0-9]+-"))
 			return null;
@@ -1632,6 +1691,7 @@ class CodemarkForm extends React.Component<Props, State> {
 	renderEditingMarker = (marker, index, force) => {
 		const { liveLocation, text, isPreviewing } = this.state;
 		const { editingCodemark } = this.props;
+		const commentType = this.getCommentType();
 
 		if (!marker) return null;
 		// if (liveLocation == index && !codeBlock.range)
@@ -1695,17 +1755,19 @@ class CodemarkForm extends React.Component<Props, State> {
 				)}
 				{liveLocation != index && !isPreviewing && (
 					<div className="code-buttons">
-						<Icon
-							title={
-								blockInjected
-									? `This code block [#${index + 1}] is in the markdown above`
-									: `Insert code block #${index + 1} in markdown`
-							}
-							placement="bottomRight"
-							name="pin"
-							className={blockInjected ? "clickable selected" : "clickable"}
-							onMouseDown={e => this.pinLocation(index, e)}
-						/>
+						{commentType !== "link" && (
+							<Icon
+								title={
+									blockInjected
+										? `This code block [#${index + 1}] is in the markdown above`
+										: `Insert code block #${index + 1} in markdown`
+								}
+								placement="bottomRight"
+								name="pin"
+								className={blockInjected ? "clickable selected" : "clickable"}
+								onMouseDown={e => this.pinLocation(index, e)}
+							/>
+						)}
 						<Icon
 							title={"Jump to this range in " + file}
 							placement="bottomRight"
@@ -1713,20 +1775,24 @@ class CodemarkForm extends React.Component<Props, State> {
 							className="clickable"
 							onClick={e => this.jumpToLocation(index, e)}
 						/>
-						<Icon
-							title="Select new range"
-							placement="bottomRight"
-							name="select"
-							className="clickable"
-							onClick={e => this.editLocation(index, e)}
-						/>
-						<Icon
-							title="Remove Range"
-							placement="bottomRight"
-							name="x"
-							className="clickable"
-							onClick={e => this.deleteLocation(index, e)}
-						/>
+						{commentType !== "link" && (
+							<>
+								<Icon
+									title="Select new range"
+									placement="bottomRight"
+									name="select"
+									className="clickable"
+									onClick={e => this.editLocation(index, e)}
+								/>
+								<Icon
+									title="Remove Range"
+									placement="bottomRight"
+									name="x"
+									className="clickable"
+									onClick={e => this.deleteLocation(index, e)}
+								/>
+							</>
+						)}
 					</div>
 				)}
 				<div style={{ clear: "both" }}></div>
@@ -1737,6 +1803,7 @@ class CodemarkForm extends React.Component<Props, State> {
 	renderCodeBlock = (index, force) => {
 		const { codeBlocks, liveLocation, text, isPreviewing } = this.state;
 		const { editingCodemark } = this.props;
+		const commentType = this.getCommentType();
 
 		const codeBlock = codeBlocks[index];
 		if (!codeBlock) return null;
@@ -1817,17 +1884,19 @@ class CodemarkForm extends React.Component<Props, State> {
 				)}
 				{liveLocation != index && !isPreviewing && (
 					<div className="code-buttons">
-						<Icon
-							title={
-								blockInjected
-									? `This code block [#${index + 1}] is in the markdown above`
-									: `Insert code block #${index + 1} in markdown`
-							}
-							placement="bottomRight"
-							name="pin"
-							className={blockInjected ? "clickable selected" : "clickable"}
-							onMouseDown={e => this.pinLocation(index, e)}
-						/>
+						{commentType !== "link" && (
+							<Icon
+								title={
+									blockInjected
+										? `This code block [#${index + 1}] is in the markdown above`
+										: `Insert code block #${index + 1} in markdown`
+								}
+								placement="bottomRight"
+								name="pin"
+								className={blockInjected ? "clickable selected" : "clickable"}
+								onMouseDown={e => this.pinLocation(index, e)}
+							/>
+						)}
 						<Icon
 							title={"Jump to this range in " + file}
 							placement="bottomRight"
@@ -1835,20 +1904,24 @@ class CodemarkForm extends React.Component<Props, State> {
 							className="clickable"
 							onClick={e => this.jumpToLocation(index, e)}
 						/>
-						<Icon
-							title="Select new range"
-							placement="bottomRight"
-							name="select"
-							className="clickable"
-							onClick={e => this.editLocation(index, e)}
-						/>
-						<Icon
-							title="Remove Range"
-							placement="bottomRight"
-							name="x"
-							className="clickable"
-							onClick={e => this.deleteLocation(index, e)}
-						/>
+						{commentType !== "link" && (
+							<>
+								<Icon
+									title="Select new range"
+									placement="bottomRight"
+									name="select"
+									className="clickable"
+									onClick={e => this.editLocation(index, e)}
+								/>
+								<Icon
+									title="Remove Range"
+									placement="bottomRight"
+									name="x"
+									className="clickable"
+									onClick={e => this.deleteLocation(index, e)}
+								/>
+							</>
+						)}
 					</div>
 				)}
 				<div style={{ clear: "both" }}></div>
@@ -1961,13 +2034,13 @@ class CodemarkForm extends React.Component<Props, State> {
 		};
 	}
 
-	cancelCompose = (e?: Event) => {
+	cancelCompose = (e?: React.SyntheticEvent) => {
 		this.props.onClickClose && this.props.onClickClose(e);
 	};
 
 	render() {
 		const { codeBlocks, scmError } = this.state;
-		const { editingCodemark, currentReviewId } = this.props;
+		const { editingCodemark, currentReviewId, currentCodeErrorId } = this.props;
 
 		const commentType = this.getCommentType();
 
@@ -1975,12 +2048,15 @@ class CodemarkForm extends React.Component<Props, State> {
 
 		// if you are conducting a review, and somehow are able to try to
 		// create an issue or a permalink, stop the user from doing that
-		if (commentType !== "comment" && currentReviewId) {
+		if (commentType !== "comment" && (currentReviewId || currentCodeErrorId)) {
+			const activity = currentReviewId ? "doing a review" : "investigating an error";
+			const additionalInfo = currentReviewId
+				? 'Mark your comment as a "change request" instead.'
+				: "";
 			return (
-				<Modal translucent onClose={this.cancelCompose} verticallyCenter>
+				<Modal onClose={this.cancelCompose} verticallyCenter>
 					<div style={{ width: "20em", fontSize: "larger", margin: "0 auto" }}>
-						Sorry, you can't add an issue while doing a review. Mark your a comment as a "change
-						request" instead.
+						Sorry, you can't add an issue or create a permalink while {activity}.{additionalInfo}
 						<div className="button-group one-button">
 							<Button className="control-button" onClick={this.cancelCompose}>
 								OK
@@ -1992,13 +2068,13 @@ class CodemarkForm extends React.Component<Props, State> {
 		}
 		if (scmError) {
 			return (
-				<Modal translucent onClose={this.cancelCompose} verticallyCenter>
+				<Modal onClose={this.cancelCompose} verticallyCenter>
 					<div style={{ width: "20em", fontSize: "larger", margin: "0 auto" }}>
 						Sorry, we encountered a git error: {scmError}
 						<br />
 						<br />
 						<FormattedMessage id="contactSupport" defaultMessage="contact support">
-							{text => <Link href="https://help.codestream.com">{text}</Link>}
+							{text => <Link href="https://docs.newrelic.com/docs/codestream/">{text}</Link>}
 						</FormattedMessage>
 						<div className="button-group one-button">
 							<Button className="control-button" onClick={this.cancelCompose}>
@@ -2016,7 +2092,9 @@ class CodemarkForm extends React.Component<Props, State> {
 					<CancelButton onClick={this.cancelCompose} incrementKeystrokeLevel={true} />
 					<PanelHeader
 						title={
-							this.props.currentReviewId
+							this.props.currentCodeErrorId
+								? "Add Comment to Error"
+								: this.props.currentReviewId
 								? "Add Comment to Review"
 								: this.props.textEditorUriHasPullRequestContext
 								? "Add Comment to Pull Request"
@@ -2192,7 +2270,7 @@ class CodemarkForm extends React.Component<Props, State> {
 			locationItems.push({ label: "Add Range", action: () => this.addLocation() });
 		// { label: "Change Location", action: () => this.editLocation(0) }
 
-		if (!this.props.multiLocation)
+		if (!this.props.multiLocation && commentType !== "link")
 			locationItems.push({ label: "Select New Range", action: () => this.editLocation(0) });
 		if (this.state.codeBlocks.length == 1)
 			locationItems.push({ label: "Remove Location", action: () => this.deleteLocation(0) });
@@ -2422,7 +2500,9 @@ class CodemarkForm extends React.Component<Props, State> {
 										paddingRight: "10px",
 										// fixed width to handle the isLoading case
 										width:
-											this.props.currentReviewId || this.props.textEditorUriHasPullRequestContext
+											this.props.currentReviewId ||
+											this.props.textEditorUriHasPullRequestContext ||
+											this.props.currentCodeErrorId
 												? "auto"
 												: "80px",
 										marginRight: 0
@@ -2451,6 +2531,8 @@ class CodemarkForm extends React.Component<Props, State> {
 										? this.props.prLabel.AddSingleComment
 										: this.props.editingCodemark
 										? "Save"
+										: this.props.currentCodeErrorId
+										? "Add Comment to Error"
 										: "Submit"}
 								</Button>
 							</Tooltip>
@@ -2524,7 +2606,8 @@ const mapStateToProps = (state: CodeStreamState): ConnectedProps => {
 		preferences,
 		providers,
 		codemarks,
-		repos
+		repos,
+		codeErrors
 	} = state;
 	const user = users[session.userId!] as CSMe;
 	const channel = context.currentStreamId
@@ -2543,7 +2626,7 @@ const mapStateToProps = (state: CodeStreamState): ConnectedProps => {
 
 	const team = teams[context.currentTeamId];
 	const adminIds = team.adminIds || EMPTY_ARRAY;
-	const removedMemberIds = team.removedMemberIds || EMPTY_ARRAY;
+	const activeMemberIds = getActiveMemberIds(team);
 	const isCurrentUserAdmin = adminIds.includes(session.userId || "");
 	const blameMap = team.settings ? team.settings.blameMap : EMPTY_OBJECT;
 	const inviteUsersOnTheFly =
@@ -2555,7 +2638,7 @@ const mapStateToProps = (state: CodeStreamState): ConnectedProps => {
 		channel,
 		teamMates,
 		teamMembers,
-		removedMemberIds,
+		activeMemberIds,
 		currentTeamId: state.context.currentTeamId,
 		blameMap: blameMap || EMPTY_OBJECT,
 		isCurrentUserAdmin,
@@ -2575,6 +2658,7 @@ const mapStateToProps = (state: CodeStreamState): ConnectedProps => {
 		selectedStreams: preferences.selectedStreams || EMPTY_OBJECT,
 		showChannels: context.channelFilter,
 		textEditorUri: editorContext.textEditorUri,
+		textEditorGitSha: editorContext.textEditorGitSha,
 		textEditorSelection: getCurrentSelection(editorContext),
 		textEditorUriContext: textEditorUriContext,
 		textEditorUriHasPullRequestContext: !!(
@@ -2587,8 +2671,10 @@ const mapStateToProps = (state: CodeStreamState): ConnectedProps => {
 		codemarkState: codemarks,
 		multipleMarkersEnabled: isFeatureEnabled(state, "multipleMarkers"),
 		currentReviewId: context.currentReviewId,
+		currentCodeErrorId: context.currentCodeErrorId,
 		inviteUsersOnTheFly,
-		prLabel: getPRLabel(state)
+		prLabel: getPRLabel(state),
+		codeErrors: codeErrors
 	};
 };
 
@@ -2596,7 +2682,11 @@ const ConnectedCodemarkForm = connect(mapStateToProps, {
 	openPanel,
 	openModal,
 	markItemRead,
-	setUserPreference
+	setUserPreference,
+	fetchCodeError,
+	upgradePendingCodeError,
+	getPullRequestConversationsFromProvider,
+	setCurrentPullRequestNeedsRefresh
 })(CodemarkForm);
 
 export { ConnectedCodemarkForm as CodemarkForm };

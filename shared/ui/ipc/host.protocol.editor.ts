@@ -16,6 +16,7 @@ export const GetActiveEditorContextRequestType = new RequestType<
 
 export interface EditorHighlightRangeRequest {
 	uri: string;
+	ref?: string;
 	range: Range;
 	highlight: boolean;
 }
@@ -32,6 +33,7 @@ export const EditorHighlightRangeRequestType = new RequestType<
 
 export interface EditorRevealRangeRequest {
 	uri: string;
+	ref?: string;
 	range: Range;
 	preserveFocus?: boolean;
 	atTop?: boolean;

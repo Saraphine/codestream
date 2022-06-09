@@ -13,6 +13,8 @@ import com.codestream.protocols.webview.EditorRangeRevealResponse
 import com.codestream.protocols.webview.EditorRangeSelectRequest
 import com.codestream.protocols.webview.EditorRangeSelectResponse
 import com.codestream.protocols.webview.EditorScrollToRequest
+import com.codestream.protocols.webview.EditorsCodelensRefreshResponse
+import com.codestream.protocols.webview.LogoutRequest
 import com.codestream.protocols.webview.MarkerApplyRequest
 import com.codestream.protocols.webview.MarkerCompareRequest
 import com.codestream.protocols.webview.MarkerInsertTextRequest
@@ -23,6 +25,7 @@ import com.codestream.protocols.webview.ShellPromptFolderResponse
 import com.codestream.protocols.webview.UpdateConfigurationRequest
 import com.codestream.protocols.webview.UpdateServerUrlRequest
 import com.codestream.reviewService
+import com.codestream.sessionService
 import com.codestream.settings.ApplicationSettingsService
 import com.codestream.settingsService
 import com.codestream.system.SPACE_ENCODED
@@ -47,6 +50,7 @@ import com.teamdev.jxbrowser.js.JsAccessible
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
+import org.eclipse.lsp4j.jsonrpc.ResponseErrorException
 import java.util.concurrent.CompletableFuture
 
 class WebViewRouter(val project: Project) {
@@ -57,7 +61,12 @@ class WebViewRouter(val project: Project) {
 
     @JsAccessible
     fun handle(rawMessage: String, origin: String?) = GlobalScope.launch {
-        val message = parse(rawMessage)
+        val message = try {
+            parse(rawMessage)
+        } catch (e: Exception) {
+            logger.error(e)
+            return@launch
+        }
 
         try {
             logger.debug("Handling ${message.method} ${message.id}")
@@ -69,8 +78,13 @@ class WebViewRouter(val project: Project) {
         } catch (e: Exception) {
             logger.warn(e)
             if (message.id != null) {
-                logger.debug("Posting response ${message.id} - Error: ${e.message}")
-                project.webViewService?.postResponse(message.id, null, e.message)
+                if (e is ResponseErrorException) {
+                    logger.debug("Posting response ${message.id} - Error: ${e.responseError.message}")
+                    project.webViewService?.postResponse(message.id, null, null, e.responseError)
+                } else {
+                    logger.debug("Posting response ${message.id} - Error: ${e.message}")
+                    project.webViewService?.postResponse(message.id, null, e.message, null)
+                }
             }
         }
     }
@@ -94,7 +108,7 @@ class WebViewRouter(val project: Project) {
                 _isReady = true
                 initialization.complete(Unit)
             }
-            "host/logout" -> authentication.logout()
+            "host/logout" -> logout(message)
             "host/restart" -> restart(message)
             "host/context/didChange" -> contextDidChange(message)
             "host/webview/reload" -> project.webViewService?.load(true)
@@ -109,6 +123,7 @@ class WebViewRouter(val project: Project) {
             "host/editor/range/reveal" -> editorRangeReveal(message)
             "host/editor/range/select" -> editorRangeSelect(message)
             "host/editor/scrollTo" -> editorScrollTo(message)
+            "host/editors/codelens/refresh" -> editorsCodelensRefresh(message)
             "host/shell/prompt/folder" -> shellPromptFolder(message)
             "host/review/showDiff" -> reviewShowDiff(message)
             "host/review/showLocalDiff" -> reviewShowLocalDiff(message)
@@ -125,6 +140,12 @@ class WebViewRouter(val project: Project) {
             logger.debug("Posting response (host) ${message.id}")
             project.webViewService?.postResponse(message.id, response.orEmptyObject)
         }
+    }
+
+    private suspend fun logout(message: WebViewMessage) {
+        val authentication = project.authenticationService ?: return
+        val request = gson.fromJson<LogoutRequest>(message.params!!)
+        authentication.logout(request.newServerUrl)
     }
 
     private suspend fun restart(message: WebViewMessage) {
@@ -183,7 +204,7 @@ class WebViewRouter(val project: Project) {
 
     private suspend fun editorRangeReveal(message: WebViewMessage): EditorRangeRevealResponse {
         val request = gson.fromJson<EditorRangeRevealRequest>(message.params!!)
-        val success = project.editorService?.reveal(sanitizeURI(request.uri)!!, request.range, request.atTop)
+        val success = project.editorService?.reveal(request.uri, request.ref, request.range, request.atTop)
             ?: false
         return EditorRangeRevealResponse(success)
     }
@@ -191,7 +212,7 @@ class WebViewRouter(val project: Project) {
     private suspend fun editorRangeSelect(message: WebViewMessage): EditorRangeSelectResponse {
         val request = gson.fromJson<EditorRangeSelectRequest>(message.params!!)
         val success =
-            project.editorService?.select(sanitizeURI(request.uri)!!, request.selection, request.preserveFocus ?: false)
+            project.editorService?.select(request.uri, request.selection, request.preserveFocus ?: false)
                 ?: false
         return EditorRangeSelectResponse(success)
     }
@@ -199,6 +220,11 @@ class WebViewRouter(val project: Project) {
     private fun editorScrollTo(message: WebViewMessage) {
         val request = gson.fromJson<EditorScrollToRequest>(message.params!!)
         project.editorService?.scroll(sanitizeURI(request.uri)!!, request.position, request.atTop)
+    }
+
+    private fun editorsCodelensRefresh(message: WebViewMessage): EditorsCodelensRefreshResponse {
+        project.sessionService?.didChangeCodelenses()
+        return EditorsCodelensRefreshResponse(true)
     }
 
     private suspend fun shellPromptFolder(message: WebViewMessage): ShellPromptFolderResponse {
@@ -256,7 +282,7 @@ class WebViewRouter(val project: Project) {
         val settings = ServiceManager.getService(ApplicationSettingsService::class.java)
         settings.serverUrl = request.serverUrl
         settings.disableStrictSSL = request.disableStrictSSL
-        project.agentService?.setServerUrl(SetServerUrlParams(request.serverUrl, request.disableStrictSSL))
+        project.agentService?.setServerUrl(SetServerUrlParams(request.serverUrl, request.disableStrictSSL, request.environment))
     }
 
     private fun openUrl(message: WebViewMessage) {

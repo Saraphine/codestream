@@ -1,6 +1,6 @@
 "use strict";
 import { Emitter, Event } from "vscode-languageserver";
-import { Container, SessionContainer } from "../../container";
+import { SessionContainer } from "../../container";
 import { Logger } from "../../logger";
 import { Unreads } from "../../protocol/agent.protocol";
 import {
@@ -8,6 +8,7 @@ import {
 	CSLastReads,
 	CSPost,
 	CSStream,
+	RepoSetting,
 	StreamType
 } from "../../protocol/api.protocol";
 import { Arrays, Functions, log } from "../../system";
@@ -62,6 +63,17 @@ export class CodeStreamUnreads {
 
 		Logger.debug(`Unreads.update:`, `Updating unreads for ${posts.length} posts...`);
 
+		const repoSettings: RepoSetting[] = await this.getRepoPreferences();
+		if (repoSettings.length) {
+			// get all the streams from posts that have a codemark or review
+			const streamIds = Object.keys(
+				Arrays.groupBy(
+					posts.filter(_ => _.codemarkId || _.reviewId),
+					p => p.streamId!
+				)
+			);
+			posts = await this.filterPostsByPreferences(posts, repoSettings, streamIds);
+		}
 		const grouped = Arrays.groupBy(posts, p => p.streamId);
 		const streams = (
 			await SessionContainer.instance().streams.get({
@@ -69,10 +81,10 @@ export class CodeStreamUnreads {
 			})
 		).streams;
 
+		const { preferences } = await this._api.getPreferences();
 		for (const [streamId, posts] of Object.entries(grouped)) {
 			const oldPostsByStream = oldPosts.filter(oldPost => oldPost && oldPost.streamId === streamId);
 
-			const { preferences } = await this._api.getPreferences();
 			if (preferences.mutedStreams && preferences.mutedStreams[streamId]) continue;
 
 			const stream = streams.find(s => s.id === streamId);
@@ -104,6 +116,145 @@ export class CodeStreamUnreads {
 		this._onDidChange.fire(values);
 	}
 
+	private async getRepoPreferences(): Promise<RepoSetting[]> {
+		try {
+			const { preferences } = await this._api.getPreferences();
+			const { scm } = SessionContainer.instance();
+
+			let repoSettings: RepoSetting[] = [];
+			const activityFilterByTeam =
+				preferences && preferences[this._api.teamId] && preferences[this._api.teamId].activityFilter
+					? preferences[this._api.teamId].activityFilter
+					: undefined;
+			if (activityFilterByTeam) {
+				if (activityFilterByTeam.mode === "openInIde") {
+					repoSettings =
+						(await scm.getRepos({ inEditorOnly: true }))?.repositories
+							?.filter(_ => _.id)
+							.map(_ => {
+								return { id: _.id!, paths: [] };
+							}) || [];
+				} else if (activityFilterByTeam.mode === "selectedRepos") {
+					repoSettings = activityFilterByTeam?.settings?.repos || [];
+				}
+			}
+			return repoSettings;
+		} catch (ex) {
+			Logger.error(ex);
+			return [];
+		}
+	}
+
+	private async filterPostsByPreferences(
+		posts: CSPost[],
+		repoSettings: RepoSetting[],
+		streamIds: string[]
+	) {
+		if (!repoSettings || !repoSettings.length) return posts;
+
+		try {
+			const codemarks = (
+				await SessionContainer.instance().codemarks.get({
+					streamIds: streamIds
+				})
+			).codemarks;
+
+			const reviews = (
+				await SessionContainer.instance().reviews.get({
+					streamIds: streamIds
+				})
+			).reviews;
+
+			const codeErrors = (
+				await SessionContainer.instance().codeErrors.get({
+					streamIds: streamIds
+				})
+			).codeErrors;
+
+			posts = posts
+				.filter(_ => {
+					if (_.mentionedUserIds && _.mentionedUserIds.includes(this._api.userId)) {
+						return _;
+					}
+					if (_.codemarkId) {
+						const codemark = codemarks.find(c => c.id === _.codemarkId);
+						if (codemark) {
+							if (codemark.assignees && codemark.assignees.includes(this._api.userId)) {
+								return _;
+							}
+
+							let found: any = undefined;
+							for (const repoSetting of repoSettings) {
+								const match = codemark.markers?.find(m => {
+									// there is a match if there is a path set and the file starts with the repoSetting path AND the repoIds match
+									let isPathMatch = true;
+									if (repoSetting.paths && repoSetting.paths[0] != null) {
+										isPathMatch =
+											(m.file || "").replace(/\\/g, "/").indexOf(repoSetting.paths![0]) === 0;
+									}
+									return isPathMatch && repoSetting.id === m.repoId;
+								});
+								found = match ? _ : undefined;
+								if (found) {
+									return found;
+								}
+							}
+							return found;
+						}
+					}
+					if (_.reviewId) {
+						const review = reviews.find(c => c.id === _.reviewId);
+						if (review) {
+							if (review.reviewers && review.reviewers.includes(this._api.userId)) {
+								return _;
+							}
+							let found: any = undefined;
+							for (const repoSetting of repoSettings) {
+								const match = review.reviewChangesets?.find(m => {
+									// there is a match if there is a path set and the file starts with the repoSetting path AND the repoIds match
+									let isPathMatch = true;
+									if (repoSetting.paths && repoSetting.paths[0] != null) {
+										isPathMatch = !!m.modifiedFiles.find(
+											_ => (_.file || "").replace(/\\/g, "/").indexOf(repoSetting.paths![0]) === 0
+										);
+									}
+									return isPathMatch && repoSetting.id === m.repoId;
+								});
+								found = match ? _ : undefined;
+								if (found) {
+									return found;
+								}
+							}
+							return found;
+						}
+					}
+					if (_.codeErrorId) {
+						const codeError = codeErrors.find(c => c.id === _.reviewId);
+						if (codeError) {
+							let found: any = undefined;
+							for (const repoSetting of repoSettings) {
+								const match = codeError.stackTraces?.find(m => {
+									return repoSetting.id === m.repoId;
+								});
+								found = match ? _ : undefined;
+								if (found) {
+									return found;
+								}
+							}
+							return found;
+						}
+					}
+					return undefined;
+				})
+				.filter(Boolean);
+		} catch (ex) {
+			debugger;
+			Logger.error(ex);
+		}
+
+		return posts;
+	}
+
 	private async computeCore(
 		lastReads: CSLastReads | undefined,
 		lastReadItems: CSLastReadItems | undefined
@@ -122,15 +273,17 @@ export class CodeStreamUnreads {
 
 		Logger.debug(`Unreads.compute:`, "Computing...");
 
+		const repoSettings: RepoSetting[] | undefined = await this.getRepoPreferences();
+
 		const unreadStreams = (await SessionContainer.instance().streams.getUnread()).streams;
 		if (unreadStreams.length !== 0) {
 			const entries = Object.entries(lastReads);
 
 			const { posts } = SessionContainer.instance();
 
+			const { preferences } = await this._api.getPreferences();
 			await Promise.all(
 				entries.map(async ([streamId, lastReadSeqNum]) => {
-					const { preferences } = await this._api.getPreferences();
 					if (Functions.safe(() => preferences.mutedStreams[streamId] === true)) return;
 
 					const stream = unreadStreams.find(stream => stream.id === streamId);
@@ -156,6 +309,10 @@ export class CodeStreamUnreads {
 						unreadPosts = unreadPosts.filter(
 							p => !p.deactivated && p.creatorId !== this._api.userId
 						);
+
+						unreadPosts = await this.filterPostsByPreferences(unreadPosts, repoSettings, [
+							streamId
+						]);
 					} catch (ex) {
 						// likely an access error because user is no longer in this channel
 						debugger;

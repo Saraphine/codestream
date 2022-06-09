@@ -45,6 +45,9 @@ const Root = styled.div<DimensionProps & { display?: string }>`
 	display: ${props => props.display};
 	vertical-align: ${props => (props.display === "inline-block" ? "-5px" : "0")};
 	margin-right: ${props => (props.display === "inline-block" ? "5px" : "0")};
+	&.no-right-margin {
+		margin-right: 0;
+	}
 	img {
 		border-radius: ${props => (props.hardRightBorder ? "3px 0 0 3px" : "3px")};
 	}
@@ -234,6 +237,7 @@ export const PRHeadshot = styled((props: PRHeadshotProps) => {
 				hardRightBorder={props.hardRightBorder}
 				onClick={props.onClick}
 				display={props.display}
+				className={props.className}
 			>
 				<Initials hardRightBorder={props.hardRightBorder} size={size} color={Colors[1]}>
 					{initials}

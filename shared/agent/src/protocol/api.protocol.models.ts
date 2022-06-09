@@ -1,7 +1,7 @@
 "use strict";
 
 import { ParsedDiff } from "diff";
-import { CompactModifiedRepo, RepoScmStatus, ThirdPartyProviders } from "./agent.protocol";
+import { EnvironmentHost, RepoScmStatus, ThirdPartyProviders } from "./agent.protocol";
 import { CSReviewCheckpoint } from "./api.protocol";
 
 export interface CSEntity {
@@ -27,6 +27,7 @@ export enum CodemarkType {
 	Trap = "trap",
 	Link = "link",
 	Review = "review",
+	CodeError = "codeError",
 	Reaction = "reaction",
 	PRComment = "prcomment"
 }
@@ -91,6 +92,9 @@ export interface CSCodemark extends CSEntity {
 
 	// review this codemark is in reply to
 	reviewId?: string;
+
+	// code error this codemark is in reply to
+	codeErrorId?: string;
 }
 
 export interface CSMarkerIdentifier {
@@ -273,6 +277,75 @@ export interface CSReview extends CSEntity {
 	pullRequestProviderId?: string;
 }
 
+export function isCSCodeError(object: any): object is CSCodeError {
+	const maybeCodeError: Partial<CSCodeError> = object;
+	return (
+		maybeCodeError.objectId != null &&
+		maybeCodeError.objectType != null &&
+		maybeCodeError.objectType.toLowerCase() === "errorgroup"
+	);
+}
+
+export interface CSCodeErrorResolutions {
+	[userId: string]: { resolvedAt: number };
+}
+
+export type CSCodeErrorStatus = "resolved" | "open";
+
+export interface CSStackTraceLine {
+	fileRelativePath?: string;
+	fileFullPath?: string;
+	method?: string;
+	arguments?: string[];
+	line?: number;
+	column?: number;
+	error?: string;
+	warning?: string;
+	resolved?: boolean;
+}
+
+export interface CSStackTraceInfo {
+	// TODO required??
+	occurrenceId?: string;
+	text?: string;
+	repoId?: string;
+	sha?: string;
+	lines: CSStackTraceLine[];
+	header?: string;
+	error?: string;
+}
+
+export interface CSStackTraceError {
+	error: string;
+}
+
+export interface CSCodeError extends CSEntity {
+	title: string;
+	text?: string;
+	stackTraces: CSStackTraceInfo[]; // (CSStackTraceInfo | CSStackTraceError)[];
+	providerUrl?: string;
+	assignees: string[];
+
+	// an array of people who have resolved the code error
+	resolvedBy?: CSCodeErrorResolutions;
+
+	teamId: string;
+	streamId: string;
+	postId: string;
+	fileStreamIds: string[];
+	status: CSCodeErrorStatus;
+	numReplies: number;
+	lastActivityAt: number;
+	followerIds?: string[];
+	codeAuthorIds?: string[];
+	permalink?: string;
+	resolvedAt?: number;
+	objectId?: string;
+	objectType?: "errorGroup";
+	objectInfo?: { [key: string]: string };
+	accountId?: number;
+}
+
 export interface Attachment {
 	mimetype: string;
 	name: string;
@@ -298,6 +371,7 @@ export interface CSPost extends CSEntity {
 	reviewId?: string;
 	files?: Attachment[];
 	sharedTo?: ShareTarget[];
+	codeErrorId?: string;
 }
 
 export interface CSRemote {
@@ -315,14 +389,15 @@ export interface CSRepository extends CSEntity {
 export enum StreamType {
 	Channel = "channel",
 	Direct = "direct",
-	File = "file"
+	File = "file",
+	Object = "object"
 }
 
 export enum ChannelServiceType {
 	Vsls = "vsls"
 }
 
-export interface CSChannelStream extends CSEntity {
+export interface CSBaseStream extends CSEntity {
 	isArchived: boolean;
 	privacy: "public" | "private";
 	sortId: string;
@@ -330,7 +405,8 @@ export interface CSChannelStream extends CSEntity {
 	mostRecentPostCreatedAt?: number;
 	mostRecentPostId?: string;
 	purpose?: string;
-
+}
+export interface CSChannelStream extends CSBaseStream {
 	type: StreamType.Channel;
 	name: string;
 	memberIds?: string[];
@@ -342,32 +418,16 @@ export interface CSChannelStream extends CSEntity {
 	priority?: number;
 }
 
-export interface CSDirectStream extends CSEntity {
-	isArchived: boolean;
-	isClosed?: boolean;
-	privacy: "public" | "private";
-	sortId: string;
-	teamId: string;
-	mostRecentPostCreatedAt?: number;
-	mostRecentPostId?: string;
-	purpose?: string;
-
+export interface CSDirectStream extends CSBaseStream {
 	type: StreamType.Direct;
 	name?: string;
 	memberIds: string[];
+	isClosed?: boolean;
 
 	priority?: number;
 }
 
-export interface CSFileStream extends CSEntity {
-	isArchived: boolean;
-	privacy: "public" | "private";
-	sortId: string;
-	teamId: string;
-	mostRecentPostCreatedAt?: number;
-	mostRecentPostId?: string;
-	purpose?: string;
-
+export interface CSFileStream extends CSBaseStream {
 	type: StreamType.File;
 	file: string;
 	repoId: string;
@@ -375,7 +435,17 @@ export interface CSFileStream extends CSEntity {
 	editingUsers?: any;
 }
 
-export type CSStream = CSChannelStream | CSDirectStream | CSFileStream;
+export interface CSObjectStream extends CSBaseStream {
+	type: StreamType.Object;
+	memberIds: string[];
+	objectId: string;
+	objectType: string;
+	accountID: number;
+
+	priority?: number;
+}
+
+export type CSStream = CSChannelStream | CSDirectStream | CSFileStream | CSObjectStream;
 
 export interface CSTeamMSTeamsProviderInfo {
 	teamId?: string;
@@ -390,6 +460,7 @@ export type CSTeamProviderInfos = CSTeamMSTeamsProviderInfo | CSTeamSlackProvide
 
 export interface CSCompany extends CSEntity {
 	name: string;
+	everyoneTeamId: string;
 	trialStartDate?: number;
 	trialEndDate?: number;
 	plan?: string;
@@ -397,12 +468,18 @@ export interface CSCompany extends CSEntity {
 	testGroups?: {
 		[key: string]: string;
 	};
+	domainJoining?: string[];
+	nrOrgIds?: number[];
+	nrAccountIds?: number[];
+	isNRConnected?: boolean;
+	host?: EnvironmentHost;
 }
 
 export interface CSTeam extends CSEntity {
 	companyId: string;
 	memberIds: string[];
 	removedMemberIds?: string[];
+	foreignMemberIds?: string[];
 	adminIds?: string[];
 	name: string;
 	primaryReferral: "internal" | "external";
@@ -423,7 +500,7 @@ export interface CSTeam extends CSEntity {
 	};
 	// only used for analytics and reporting. differentiates between teams created by us employees
 	reportingGroup?: string;
-
+	isEveryoneTeam?: boolean;
 	settings?: CSTeamSettings;
 }
 
@@ -466,11 +543,13 @@ export interface CSProviderInfo {
 	userId?: string;
 	isApiToken?: boolean;
 	hosts?: { [host: string]: CSProviderInfos };
+	orgIds?: number[];
 	data?: {
 		baseUrl?: string;
 		scopes?: string;
 		[key: string]: any;
 	};
+	pendingVerification?: boolean;
 }
 
 export interface CSAsanaProviderInfo extends CSProviderInfo {
@@ -531,9 +610,11 @@ export interface CSAzureDevOpsProviderInfo extends CSProviderInfo {
 
 export interface CSOktaProviderInfo extends CSProviderInfo {}
 
-export interface CSClubhouseProviderInfo extends CSProviderInfo {}
+export interface CSShortcutProviderInfo extends CSProviderInfo {}
 
 export interface CSLinearProviderInfo extends CSProviderInfo {}
+
+export interface CSNewRelicProviderInfo extends CSProviderInfo {}
 
 export type CSProviderInfos =
 	| CSAsanaProviderInfo
@@ -548,8 +629,9 @@ export type CSProviderInfos =
 	| CSYouTrackProviderInfo
 	| CSAzureDevOpsProviderInfo
 	| CSOktaProviderInfo
-	| CSClubhouseProviderInfo
-	| CSLinearProviderInfo;
+	| CSShortcutProviderInfo
+	| CSLinearProviderInfo
+	| CSNewRelicProviderInfo;
 
 type Filter<T, U> = T extends U ? T : never;
 export type CSRefreshableProviderInfos = Filter<CSProviderInfos, { refreshToken: string }>;
@@ -573,15 +655,12 @@ export interface CSUser extends CSEntity {
 	timeZone: string;
 	totalPosts: number;
 	totalReviews: number;
+	totalCodeErrors: number;
 	numUsersInvited: number;
 	username: string;
 	providerIdentities?: string[];
 	codestreamId?: string;
 	externalUserId?: string;
-	// all of the local changes on disk (i.e. not pushed)
-	modifiedRepos?: { [teamId: string]: RepoScmStatus[] };
-	modifiedReposModifiedAt?: number;
-	compactModifiedRepos?: { [teamId: string]: CompactModifiedRepo[] };
 	status?: { [teamId: string]: CSMeStatus };
 
 	avatar?: {
@@ -593,6 +672,7 @@ export interface CSUser extends CSEntity {
 	preferences?: CSMePreferences;
 	firstSessionStartedAt?: number;
 	hasGitLens?: boolean;
+	countryCode?: string;
 }
 
 export interface CSLastReads {
@@ -650,6 +730,7 @@ export interface CSMePreferences {
 	telemetryOptOut?: boolean;
 	notifications?: CSNotificationPreference;
 	notificationDelivery?: CSNotificationDeliveryPreference;
+	toastPrNotify?: boolean;
 	skipWallToWallBanner?: boolean;
 	skipGitEmailCheck?: boolean;
 	skipEmailingAuthors?: boolean;
@@ -659,6 +740,7 @@ export interface CSMePreferences {
 	fetchRequestQueries?: FetchRequestQuery[];
 	pullRequestQueryShowAllRepos?: boolean;
 	pullRequestQueryHideLabels?: boolean;
+	pullRequestQueryHideDiffs?: boolean;
 	pullRequestQueryHideDescriptions?: boolean;
 	pullRequestView?: "auto" | "vertical" | "side-by-side";
 	reviewCreateOnCommit?: boolean;
@@ -671,7 +753,6 @@ export interface CSMePreferences {
 	};
 
 	// which icons to show in the editor gutters
-	codemarksShowPRComments?: boolean;
 	codemarksHideReviews?: boolean;
 	codemarksHideResolved?: boolean;
 	codemarksShowArchived?: boolean;
@@ -688,8 +769,24 @@ export interface CSMePreferences {
 	acceptedTOS?: boolean;
 
 	[key: string]: any;
+	/** teamId to settings */
+	activityFilter?: { [key: string]: ActivityFilter | undefined };
+	demoMode?: boolean;
+	lastTeamId?: string;
+	observabilityRepoEntities?: { repoId: string; entityGuid: string }[];
 }
 
+export interface RepoSetting {
+	/** repo id */
+	id: string;
+	/** filter paths, like src/foo/bar */
+	paths?: string[];
+}
+
+export interface ActivityFilter {
+	mode: "everyone" | "openInIde" | "selectedRepos";
+	settings: { repos: RepoSetting[] };
+}
 export interface CSMeStatus {
 	label: string;
 	ticketId: string;
@@ -698,7 +795,7 @@ export interface CSMeStatus {
 	invisible?: boolean;
 }
 
-type CSMeProviderInfo = { slack?: CSSlackProviderInfo } & {
+type CSMeProviderInfo = {
 	[teamId in string]: {
 		asana?: CSAsanaProviderInfo;
 		github?: CSGitHubProviderInfo;
@@ -710,6 +807,7 @@ type CSMeProviderInfo = { slack?: CSSlackProviderInfo } & {
 		youtrack?: CSYouTrackProviderInfo;
 		azuredevops?: CSAzureDevOpsProviderInfo;
 		okta?: CSOktaProviderInfo;
+		newrelic?: CSNewRelicProviderInfo;
 		[key: string]: CSProviderInfos | undefined;
 	};
 };

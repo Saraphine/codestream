@@ -9,6 +9,7 @@ interface Props {
 	className?: string;
 	checked?: boolean;
 	disabled?: string;
+	disabledEmpty?: boolean;
 	loading?: boolean;
 	noMargin?: boolean;
 	onClickLabel?: React.MouseEventHandler;
@@ -73,7 +74,7 @@ export function Checkbox(props: PropsWithChildren<Props>) {
 					{props.children}
 				</label>
 			</span>
-			{props.disabled && <span className="subtle">{props.disabled}</span>}
+			{props.disabled && !props.disabledEmpty && <span className="subtle">{props.disabled}</span>}
 		</Root>
 	);
 }

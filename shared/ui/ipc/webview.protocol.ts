@@ -1,3 +1,4 @@
+import { PixieDynamicLoggingFunctionParameter } from "@codestream/protocols/agent";
 import { CodemarkType } from "@codestream/protocols/api";
 import { NotificationType } from "vscode-jsonrpc";
 import { Range } from "vscode-languageserver-types";
@@ -18,6 +19,7 @@ export interface ShowCodemarkNotification {
 	codemarkId: string;
 	sourceUri?: string;
 }
+
 export const ShowCodemarkNotificationType = new NotificationType<ShowCodemarkNotification, void>(
 	`${IpcRoutes.Webview}/codemark/show`
 );
@@ -28,8 +30,18 @@ export interface ShowReviewNotification {
 	openFirstDiff?: boolean;
 	sourceUri?: string;
 }
+
 export const ShowReviewNotificationType = new NotificationType<ShowReviewNotification, void>(
 	`${IpcRoutes.Webview}/review/show`
+);
+
+// TODO: This should be a request to the webview -- not a notification
+export interface ShowCodeErrorNotification {
+	codeErrorId: string;
+}
+
+export const ShowCodeErrorNotificationType = new NotificationType<ShowCodeErrorNotification, void>(
+	`${IpcRoutes.Webview}/codeError/show`
 );
 
 // TODO: This should be a request to the webview -- not a notification
@@ -41,6 +53,7 @@ export interface ShowPullRequestwNotification {
 	url?: string;
 	source?: string;
 }
+
 export const ShowPullRequestNotificationType = new NotificationType<
 	ShowPullRequestwNotification,
 	void
@@ -52,6 +65,7 @@ export interface ShowStreamNotification {
 	threadId?: string;
 	codemarkId?: string;
 }
+
 export const ShowStreamNotificationType = new NotificationType<ShowStreamNotification, void>(
 	`${IpcRoutes.Webview}/stream/show`
 );
@@ -127,3 +141,49 @@ export const ShowPreviousChangedFileNotificationType = new NotificationType<
 	ShowPreviousChangedFileNotification,
 	void
 >(`${IpcRoutes.Webview}/showChangedFile/previous`);
+
+export interface PixieDynamicLogging {
+	functionName: string;
+	functionParameters: PixieDynamicLoggingFunctionParameter[];
+	functionReceiver?: string;
+	packageName: string;
+}
+
+export const PixieDynamicLoggingType = new NotificationType<PixieDynamicLogging, void>(
+	`${IpcRoutes.Webview}/pixie/dynamicLogging`
+);
+
+export interface ViewMethodLevelTelemetryNotification {
+	range?: Range;
+	methodName: string;
+	newRelicAccountId?: number;
+	newRelicEntityGuid?: string;
+}
+
+export const ViewMethodLevelTelemetryNotificationType = new NotificationType<
+	ViewMethodLevelTelemetryNotification,
+	void
+>(`${IpcRoutes.Webview}/mlt/view`);
+
+export interface ShowProgressIndicator {
+	progressStatus: boolean;
+}
+
+export const ShowProgressIndicatorType = new NotificationType<ShowProgressIndicator, void>(
+	`${IpcRoutes.Webview}/system/progressIndicator`
+);
+
+export interface HandlePullRequestDirectivesNotification {
+	pullRequest: {
+		providerId: string;
+		id: string;
+	};
+	directives: {
+		directives: any;
+	};
+}
+
+export const HandlePullRequestDirectivesNotificationType = new NotificationType<
+	HandlePullRequestDirectivesNotification,
+	void
+>(`${IpcRoutes.Webview}/pullRequest/handleDirectives`);

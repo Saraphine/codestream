@@ -1,13 +1,16 @@
-[![Devie Award](https://raw.githubusercontent.com/TeamCodeStream/codestream-guide/develop/docs/src/assets/images/devie_banner.png)](https://www.codestream.com/blog/winner-of-the-2021-devie-for-best-coding-tool-codestream)
 
-# CodeStream
+**CodeStream is now part of New Relic. [Learn more.](https://newrelic.com/blog/nerdlog/announcing-new-relic-codestream)**
 
-CodeStream is a developer collaboration platform that integrates essential dev tools into VS Code. Eliminate context-switching and simplify code discussion and code review by putting collaboration tools in your IDE.
+
+# New Relic CodeStream
+
+New Relic CodeStream is a developer collaboration platform that integrates essential dev tools into VS Code. Eliminate context-switching and simplify code discussion and code review by putting collaboration tools in your IDE.
 
 ### Integrations
 
 - **Code Hosts:** Bitbucket, Bitbucket Server, GitHub, GitHub Enterprise, GitLab, GitLab Self-Managed
 - **Issue Trackers:** Asana, Azure DevOps, Bitbucket, Clubhouse, GitHub, GitHub Enterprise, GitLab, GitLab Self-Managed, Jira, Linear, Trello, YouTrack
+- **Observability:** New Relic, Pixie
 - **Messaging Services:** Slack, Microsoft Teams
 
 ### Requirements
@@ -39,6 +42,15 @@ Your teammates can participate in the discussion right from their IDE, or from S
 
 ![Share on Slack](https://raw.githubusercontent.com/TeamCodeStream/CodeStream/master/images/ShareOnSlack1.png)
 
+# Add Observability to your IDE
+
+Resolve production errors faster and improve software performance by bringing production telemetry from New Relic into your IDE. Operations and dev teams can identify application owners quickly and work together to resolve critical errors. 
+
+![Observability](https://raw.githubusercontent.com/TeamCodeStream/codestream/develop/images/animated/Observability-VSC.gif)
+
+In a single click, you can jump from Errors Inbox on New Relic to their IDE and step through the stack trace for code-level debugging of high-impact errors. Additionally, discover, view, filter, and update the status of open issues all from the comfort of your favorite IDE.
+
+
 # Build the Knowledge Base Behind Your Codebase
 
 CodeStream turns conversation into documentation by capturing all of the discussion about your code, and saving it with your code. Comment and code review threads are automatically repositioned as your code changes, even across branches. All with zero effort on your part.
@@ -55,7 +67,7 @@ Your team’s codemarks, which include the message text and the code snippet, ar
 
 # Help & Feedback
 
-Check out the [user guide](https://docs.codestream.com/userguide/) for more information on getting started with CodeStream. Please follow [@teamcodestream](http://twitter.com/teamcodestream) for product updates and to share feedback and questions. You can also email us at support@codestream.com.
+Check out the [user guide](https://docs.newrelic.com/docs/codestream/) for more information on getting started with CodeStream. Please follow [@teamcodestream](http://twitter.com/teamcodestream) for product updates and to share feedback and questions. You can also email us at support@codestream.com.
 
 <p align="center">
   <br />

@@ -10,11 +10,14 @@ import {
 	AsanaUser,
 	AsanaWorkspace,
 	CreateThirdPartyCardRequest,
+	FetchAssignableUsersAutocompleteRequest,
+	FetchAssignableUsersResponse,
 	FetchThirdPartyBoardsRequest,
 	FetchThirdPartyBoardsResponse,
 	FetchThirdPartyCardsRequest,
 	FetchThirdPartyCardsResponse,
 	MoveThirdPartyCardRequest,
+	ThirdPartyDisconnect,
 	ThirdPartyProviderBoard
 } from "../protocol/agent.protocol";
 import { CSAsanaProviderInfo } from "../protocol/api.protocol";
@@ -48,8 +51,14 @@ export class AsanaProvider extends ThirdPartyIssueProviderBase<CSAsanaProviderIn
 	}
 
 	async onConnected(providerInfo?: CSAsanaProviderInfo) {
-		super.onConnected(providerInfo);
-		this._asanaUser = await this.getMe();
+		await super.onConnected(providerInfo);
+		this._asanaUser = await this.getMe(true);
+	}
+
+	@log()
+	async onDisconnected(request?: ThirdPartyDisconnect) {
+		delete this._asanaUser;
+		return super.onDisconnected(request);
 	}
 
 	@log()
@@ -242,8 +251,13 @@ export class AsanaProvider extends ThirdPartyIssueProviderBase<CSAsanaProviderIn
 	@log()
 	async moveCard(request: MoveThirdPartyCardRequest) {}
 
-	private async getMe(): Promise<AsanaUser> {
-		const userResponse = await this.get<{ data: AsanaUser }>(`/api/1.0/users/me`);
+	private async getMe(dontEnsureConnected: boolean = false): Promise<AsanaUser> {
+		const userResponse = await this.get<{ data: AsanaUser }>(
+			`/api/1.0/users/me`,
+			{},
+			{},
+			!dontEnsureConnected
+		);
 		return userResponse.body.data;
 	}
 

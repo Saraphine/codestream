@@ -13,6 +13,7 @@ import {
 	FetchCodemarksRequestType,
 	FetchPostRepliesRequestType,
 	FetchPostsRequestType,
+	FetchUsersRequestType,
 	InviteUserRequestType,
 	JoinStreamRequestType,
 	LeaveStreamRequestType,
@@ -50,6 +51,11 @@ import {
 } from "../store/codemarks/actions";
 import { createReview, NewReviewAttributes, updateReviews } from "../store/reviews/actions";
 import {
+	createCodeError,
+	NewCodeErrorAttributes,
+	updateCodeErrors
+} from "../store/codeErrors/actions";
+import {
 	closePanel,
 	openPanel,
 	openModal,
@@ -78,7 +84,6 @@ import { getFileScmError } from "../store/editorContext/reducer";
 import { PostEntryPoint } from "../store/context/types";
 import { middlewareInjector } from "../store/middleware-injector";
 import { PostsActionsType } from "../store/posts/types";
-import { getPost } from "../store/posts/reducer";
 
 export {
 	openPanel,
@@ -92,11 +97,6 @@ export {
 	setCodemarkTagFilter,
 	setChannelFilter
 };
-export {
-	connectProvider,
-	disconnectProvider,
-	removeEnterpriseProvider
-} from "../store/providers/actions";
 
 export const markStreamRead = (streamId: string, postId?: string) => () => {
 	HostApi.instance
@@ -195,7 +195,7 @@ export const createPostAndCodemark = (
 							React.createElement(
 								"a",
 								{
-									href: "https://docs.codestream.com/userguide/faq/git-issues/"
+									href: "https://docs.newrelic.com/docs/codestream/troubleshooting/git-issues/"
 								},
 								"Learn more"
 							)
@@ -277,6 +277,18 @@ export const createPostAndReview = (
 				getTeamMembers(getState()),
 				attributes.text || ""
 			).concat(attributes.reviewers)
+		})
+	);
+};
+
+export const createPostAndCodeError = (
+	attributes: NewCodeErrorAttributes,
+	entryPoint?: PostEntryPoint
+) => async (dispatch, getState: () => CodeStreamState) => {
+	return dispatch(
+		createCodeError({
+			...attributes,
+			entryPoint: entryPoint
 		})
 	);
 };
@@ -770,17 +782,34 @@ export const fetchPosts = (params: {
 	}
 };
 
-export const fetchThread = (streamId: string, parentPostId: string) => async dispatch => {
+export const fetchThread = (streamId: string, parentPostId: string) => async (
+	dispatch,
+	getState
+) => {
 	try {
 		const { posts, codemarks } = await HostApi.instance.send(FetchPostRepliesRequestType, {
 			streamId,
 			postId: parentPostId
 		});
-		codemarks && dispatch(saveCodemarks(codemarks));
-		return dispatch(postsActions.addPostsForStream(streamId, posts));
+		const missingAuthorIds: string[] = [];
+		for (const post of posts) {
+			const author = getState().users[post.creatorId];
+			if (!author) {
+				if (!missingAuthorIds.includes(post.creatorId)) {
+					missingAuthorIds.push(post.creatorId);
+				}
+			}
+		}
+		if (missingAuthorIds.length > 0) {
+			const response = await HostApi.instance.send(FetchUsersRequestType, {
+				userIds: missingAuthorIds
+			});
+			await dispatch(addUsers(response.users));
+		}
+		codemarks && (await dispatch(saveCodemarks(codemarks)));
+		await dispatch(postsActions.addPostsForStream(streamId, posts));
 	} catch (error) {
 		logError(`There was an error fetching a thread: ${error}`, { parentPostId });
-		return undefined;
 	}
 };
 

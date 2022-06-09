@@ -61,4 +61,13 @@ class JxBrowserWebView(val jxBrowser: Browser, val router: WebViewRouter) : WebV
     override fun openDevTools() {
         logger.warn("Open webview dev tools action is not supported in JxBrowser webviews")
     }
+
+    override fun zoomIn() {
+    }
+
+    override fun zoomOut() {
+    }
+
+    override fun resetZoom() {
+    }
 }

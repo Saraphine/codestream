@@ -8,10 +8,8 @@ import { HostDidChangeWorkspaceFoldersNotificationType } from "../ipc/host.proto
 import { useDidMount } from "../utilities/hooks";
 import { HostApi } from "..";
 import { OpenPullRequests } from "./OpenPullRequests";
-import { TeamPanel } from "./TeamPanel";
 import { WebviewPanels } from "../ipc/webview.protocol.common";
-import IssueDropdown from "./CrossPostIssueControls/IssueDropdown";
-import { WorkInProgress } from "./WorkInProgress";
+import IssuesPane from "./CrossPostIssueControls/IssuesPane";
 import Codemarks from "./Codemarks";
 import { CreateCodemarkIcons } from "./CreateCodemarkIcons";
 import { Pane, PaneState } from "../src/components/Pane";
@@ -19,11 +17,14 @@ import Draggable from "react-draggable";
 import { findLastIndex } from "../utils";
 import { setUserPreference } from "./actions";
 import cx from "classnames";
-import { getConnectedSupportedPullRequestHosts } from "../store/providers/reducer";
+import {
+	getConnectedSupportedPullRequestHosts,
+	isConnectedSelectorFriendly
+} from "../store/providers/reducer";
 import { getPreferences } from "../store/users/reducer";
 import { getRepos } from "../store/repos/reducer";
+import { Observability } from "./Observability";
 
-const PADDING_TOP = 25;
 
 const Root = styled.div`
 	height: 100%;
@@ -32,8 +33,7 @@ const Root = styled.div`
 `;
 
 const Panels = styled.div`
-	padding-top: ${PADDING_TOP}px;
-	height: 100%;
+    height: 100%;
 `;
 
 export const ExtensionTitle = styled.h2`
@@ -59,13 +59,31 @@ export const DragHeaderContext = React.createContext({
 	stop: (e: any, id: WebviewPanels) => {}
 });
 
+const _defaultPaneSettings = {};
+_defaultPaneSettings[WebviewPanels.OpenPullRequests] = {};
+_defaultPaneSettings[WebviewPanels.OpenReviews] = {};
+_defaultPaneSettings[WebviewPanels.CodemarksForFile] = {};
+// default this one to not show
+_defaultPaneSettings[WebviewPanels.Tasks] = {};
+_defaultPaneSettings[WebviewPanels.Observability] = {};
+// _defaultPaneSettings[WebviewPanels.Team] = {};
+export const DEFAULT_PANE_SETTINGS = _defaultPaneSettings;
+
+// We default the panes to a different order when users sign up via NR,
+// but these lists should contain the same entries
 export const AVAILABLE_PANES = [
 	WebviewPanels.OpenPullRequests,
 	WebviewPanels.OpenReviews,
 	WebviewPanels.CodemarksForFile,
-	WebviewPanels.WorkInProgress,
-	WebviewPanels.Tasks,
-	WebviewPanels.Team
+	WebviewPanels.Observability,
+	WebviewPanels.Tasks
+];
+export const AVAILABLE_PANES_NR = [
+	WebviewPanels.Observability,
+	WebviewPanels.OpenPullRequests,
+	WebviewPanels.OpenReviews,
+	WebviewPanels.CodemarksForFile,
+	WebviewPanels.Tasks
 ];
 
 export const COLLAPSED_SIZE = 22;
@@ -79,8 +97,17 @@ export const Sidebar = React.memo(function Sidebar() {
 		const preferences = getPreferences(state);
 		const repos = getRepos(state);
 
+		const isNewRelicSignUp = isConnectedSelectorFriendly(
+			state.users,
+			"", // we specifically want to know if there's top-level data
+			state.session,
+			state.providers,
+			{ id: "newrelic*com" }
+		);
+		const defaultPaneOrder = isNewRelicSignUp ? AVAILABLE_PANES_NR : AVAILABLE_PANES;
+
 		// get the preferences, or use the default
-		let sidebarPaneOrder = preferences.sidebarPaneOrder || AVAILABLE_PANES;
+		let sidebarPaneOrder = preferences.sidebarPaneOrder || defaultPaneOrder;
 		// in case someone has customized their pane order, but then we
 		// added a new pane, check to see that all available panes are
 		// represented
@@ -92,11 +119,11 @@ export const Sidebar = React.memo(function Sidebar() {
 
 		return {
 			repos,
-			removedPanes: preferences.removedPanes || EMPTY_HASH,
 			sidebarPanes: preferences.sidebarPanes || EMPTY_HASH,
 			sidebarPaneOrder,
 			currentUserId: state.session.userId!,
-			hasPRProvider: getConnectedSupportedPullRequestHosts(state).length > 0
+			hasPRProvider: getConnectedSupportedPullRequestHosts(state).length > 0,
+			ideName: state.ide.name
 		};
 	}, shallowEqual);
 	const { sidebarPanes } = derivedState;
@@ -110,6 +137,10 @@ export const Sidebar = React.memo(function Sidebar() {
 	const [windowSize, setWindowSize] = useState(EMPTY_SIZE);
 	const [headerDragY, setHeaderDragY] = useState(0);
 	const [initialRender, setInitialRender] = useState(true);
+
+	const TOP_PADDING = useMemo(() => {
+		return derivedState.ideName === "VS" ? 31 : 25;
+	}, [derivedState.ideName]);
 
 	const fetchOpenRepos = async () => {
 		const response = await HostApi.instance.send(GetReposScmRequestType, {
@@ -162,13 +193,14 @@ export const Sidebar = React.memo(function Sidebar() {
 		};
 	}, []); // Empty array ensures that effect is only run on mount
 
-	const showPullRequests = useMemo(() => {
-		if (derivedState.hasPRProvider) return true;
-		// FIXME hardcoded github
-		return (
-			openRepos.filter(r => r.providerGuess === "github" || r.providerGuess === "gitlab").length > 0
-		);
-	}, [derivedState.hasPRProvider, openRepos]);
+	// Currently always showing, regardless of provider (leaving commented out because we might revert in future)
+	// const showPullRequests = useMemo(() => {
+	// 	if (derivedState.hasPRProvider) return true;
+	// 	// FIXME hardcoded github
+	// 	return (
+	// 		openRepos.filter(r => r.providerGuess === "github" || r.providerGuess === "gitlab").length > 0
+	// 	);
+	// }, [derivedState.hasPRProvider, openRepos]);
 
 	const panes: {
 		id: WebviewPanels;
@@ -177,12 +209,14 @@ export const Sidebar = React.memo(function Sidebar() {
 		maximized: boolean;
 		size: number;
 	}[] = derivedState.sidebarPaneOrder
-		.filter(id => showPullRequests || id !== WebviewPanels.OpenPullRequests)
+		// .filter(id => showPullRequests || id !== WebviewPanels.OpenPullRequests)
+		.filter(id => AVAILABLE_PANES.includes(id))
 		.map(id => {
 			const settings = sidebarPanes[id] || {};
+			const defaults = DEFAULT_PANE_SETTINGS[id] || {};
 			return {
 				id,
-				removed: settings.removed,
+				removed: settings.removed == null ? defaults.removed : settings.removed,
 				collapsed: settings.collapsed,
 				maximized: settings.maximized,
 				size: sizes[id] || Math.abs(settings.size) || 1
@@ -214,8 +248,8 @@ export const Sidebar = React.memo(function Sidebar() {
 	})();
 
 	const positions = (() => {
-		const availableHeight = windowSize.height - PADDING_TOP - COLLAPSED_SIZE * numCollapsed;
-		let accumulator = PADDING_TOP;
+		const availableHeight = windowSize.height - TOP_PADDING - COLLAPSED_SIZE * numCollapsed;
+		let accumulator = TOP_PADDING;
 		return panes.map(p => {
 			const size = sizes[p.id] || p.size || 1;
 			const height = p.removed
@@ -241,8 +275,8 @@ export const Sidebar = React.memo(function Sidebar() {
 		// don't worry about using the dynamic version of collapsed because
 		// if one pane is maximized, you can't drag. subtract PADDING_TOP for the header padding,
 		// and COLLAPSED_SIZE for each collapsed pane
-		const availableHeight = windowSize.height - PADDING_TOP - COLLAPSED_SIZE * numCollapsed;
-		let accumulator = PADDING_TOP;
+		const availableHeight = windowSize.height - TOP_PADDING - COLLAPSED_SIZE * numCollapsed;
+		let accumulator = TOP_PADDING;
 		const firstExpanded = panes.findIndex(p => !p.collapsed);
 		const lastExpanded = findLastIndex(panes, p => !p.collapsed);
 		return panes.map((p, index) => {
@@ -348,14 +382,12 @@ export const Sidebar = React.memo(function Sidebar() {
 				return <OpenPullRequests openRepos={openRepos} paneState={paneState} />;
 			case WebviewPanels.OpenReviews:
 				return <OpenReviews openRepos={openRepos} paneState={paneState} />;
-			case WebviewPanels.WorkInProgress:
-				return <WorkInProgress openRepos={openRepos} paneState={paneState} />;
 			case WebviewPanels.Tasks:
-				return <IssueDropdown paneState={paneState} />;
+				return <IssuesPane paneState={paneState} />;
 			case WebviewPanels.CodemarksForFile:
 				return <Codemarks paneState={paneState} />;
-			case WebviewPanels.Team:
-				return <TeamPanel paneState={paneState} />;
+			case WebviewPanels.Observability:
+				return <Observability paneState={paneState} />;
 		}
 		return null;
 	};
@@ -365,7 +397,7 @@ export const Sidebar = React.memo(function Sidebar() {
 		<Root className={dragging || initialRender ? "" : "animate-height"}>
 			<CreateCodemarkIcons />
 			{/*<ExtensionTitle>CodeStream</ExtensionTitle>*/}
-			<Panels>
+			<Panels style={{ paddingTop: `${TOP_PADDING}px` }}>
 				{panes.map((pane, index) => {
 					const position = dragPositions[index];
 					if (!position || pane.removed) return null;

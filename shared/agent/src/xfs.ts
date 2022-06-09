@@ -1,6 +1,8 @@
 "use strict";
 
 import * as fs from "fs";
+import path from "path";
+import { DirectoryTree } from "protocol/agent.protocol.scm";
 import writeAtomic from "write-file-atomic";
 
 export namespace xfs {
@@ -16,8 +18,8 @@ export namespace xfs {
 		});
 	}
 
-	export async function writeTextAtomic(text: any, destPath: string): Promise<undefined> {
-		return new Promise<undefined>((resolve, reject) => {
+	export async function writeTextAtomic(text: any, destPath: string): Promise<void> {
+		return new Promise<void>((resolve, reject) => {
 			writeAtomic(destPath, text, err => {
 				if (err) {
 					reject(err);
@@ -33,10 +35,10 @@ export namespace xfs {
 		return data ? JSON.parse(data) : undefined;
 	}
 
-	export async function writeJsonAtomic(json: any, destPath: string): Promise<undefined> {
+	export async function writeJsonAtomic(json: any, destPath: string): Promise<void> {
 		const data = JSON.stringify(json, null, 2);
 
-		return new Promise<undefined>((resolve, reject) => {
+		return new Promise<void>((resolve, reject) => {
 			writeAtomic(destPath, data, err => {
 				if (err) {
 					reject(err);
@@ -61,5 +63,42 @@ export namespace xfs {
 				});
 			}
 		});
+	}
+
+	const DIRECTORY_TREE_DEPTH = 2;
+	export function getDirectoryTree(tree: DirectoryTree, maxDepth = DIRECTORY_TREE_DEPTH) {
+		try {
+			const root = tree.fullPath;
+			// NOTE: could be others to exclude here...
+			const files = fs
+				.readdirSync(root)
+				.filter(_ => _ !== "obj" && _ !== "bin" && _ !== "node_modules" && _.indexOf(".") !== 0);
+
+			if (files.length === 0) {
+				return tree;
+			}
+
+			for (const file of files) {
+				const fullPath = path.resolve(root, file);
+				const stat = fs.statSync(fullPath);
+				if (stat.isDirectory()) {
+					const nextObj: DirectoryTree = {
+						fullPath: fullPath,
+						name: file,
+						partialPath: tree.partialPath.concat(file),
+						children: [],
+						id: tree.id,
+						depth: tree.depth + 1
+					};
+					if (nextObj.depth >= DIRECTORY_TREE_DEPTH) {
+						tree.children.push(nextObj);
+					} else {
+						tree.children.push(getDirectoryTree(nextObj, maxDepth));
+					}
+				}
+			}
+			return tree;
+		} catch (ex) {}
+		return tree;
 	}
 }

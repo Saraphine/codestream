@@ -14,6 +14,7 @@ export interface ActiveEditorInfo {
 	fileName: string;
 	languageId?: string;
 	uri: string;
+	gitSha?: string;
 	metrics?: EditorMetrics;
 	selections: EditorSelection[];
 	visibleRanges: Range[];
@@ -52,6 +53,7 @@ export const HostDidChangeConfigNotificationType = new NotificationType<
 
 export interface HostDidChangeEditorSelectionNotification {
 	uri: string;
+	gitSha?: string;
 	selections: EditorSelection[];
 	visibleRanges: Range[];
 	lineCount?: number;
@@ -63,6 +65,7 @@ export const HostDidChangeEditorSelectionNotificationType = new NotificationType
 
 export interface HostDidChangeEditorVisibleRangesNotification {
 	uri: string;
+	gitSha?: string;
 	selections: EditorSelection[];
 	visibleRanges: Range[];
 	lineCount?: number;
@@ -95,16 +98,21 @@ export enum RouteControllerType {
 	Navigate = "navigate",
 	Search = "search",
 	PullRequest = "pullRequest",
-	StartWork = "startWork"
+	StartWork = "startWork",
+	NewRelic = "newrelic",
+	CodeError = "codeerror",
+	File = "file"
 }
 export enum RouteActionType {
 	Open = "open"
 }
-export interface Route {
+export interface Route extends RouteWithQuery<any> {}
+
+export interface RouteWithQuery<Query> {
 	controller?: RouteControllerType;
-	action?: RouteActionType;
+	action?: any;
 	id?: string;
-	query?: any;
+	query: Query;
 }
 
 export const HostDidReceiveRequestNotificationType = new NotificationType<
@@ -113,6 +121,7 @@ export const HostDidReceiveRequestNotificationType = new NotificationType<
 >(`${IpcRoutes.Webview}/request/parse`);
 
 export interface HostDidChangeWorkspaceFoldersNotification {}
-export const HostDidChangeWorkspaceFoldersNotificationType = new NotificationType<HostDidChangeWorkspaceFoldersNotification, void>(
-	"${IpcRoutes.Webview}/didChangeWorkspaceFolders"
-);
+export const HostDidChangeWorkspaceFoldersNotificationType = new NotificationType<
+	HostDidChangeWorkspaceFoldersNotification,
+	void
+>("${IpcRoutes.Webview}/didChangeWorkspaceFolders");

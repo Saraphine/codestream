@@ -1,18 +1,15 @@
 import React, { useEffect, useState, useCallback } from "react";
 import Button from "../Stream/Button";
 import { CodeStreamState } from "../store";
-import { connect, useSelector } from "react-redux";
-import { goToNewUserEntry, goToSignup } from "../store/context/actions";
-import { Link } from "../Stream/Link";
+import { useDispatch, useSelector } from "react-redux";
+import { goToSignup } from "../store/context/actions";
 import { TextInput } from "./TextInput";
 import { HostApi } from "..";
-import { DispatchProp } from "../store/common";
 import { GetInviteInfoRequestType } from "@codestream/protocols/agent";
 import { LoginResult } from "@codestream/protocols/api";
 import { FormattedMessage } from "react-intl";
 import { SignupType } from "./actions";
 import { UpdateServerUrlRequestType } from "../ipc/host.protocol";
-import Icon from "../Stream/Icon";
 
 const errorToMessageId = {
 	[LoginResult.InvalidToken]: "confirmation.invalid",
@@ -21,7 +18,12 @@ const errorToMessageId = {
 	[LoginResult.Unknown]: "unexpectedError"
 };
 
-export const JoinTeam = (connect(undefined) as any)((props: DispatchProp) => {
+export interface JoinTeamProps {
+	useComponent?: boolean;
+}
+
+export const JoinTeam = (props: React.PropsWithChildren<JoinTeamProps>) => {
+	const dispatch = useDispatch();
 	const [inviteCode, setInviteCode] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<LoginResult | undefined>(undefined);
@@ -42,7 +44,10 @@ export const JoinTeam = (connect(undefined) as any)((props: DispatchProp) => {
 				"Reg Path": "Join Team",
 				"TOS Type": tosType
 			});
-			props.dispatch(goToSignup({ ...info, inviteCode: code, type: SignupType.JoinTeam, tosType }));
+			// HostApi.instance.track("Joined Organization", {
+			// 	Availability: ""
+			// });
+			dispatch(goToSignup({ ...info, inviteCode: code, type: SignupType.JoinTeam, tosType }));
 		} else {
 			setIsLoading(false);
 			setError(status);
@@ -118,42 +123,61 @@ export const JoinTeam = (connect(undefined) as any)((props: DispatchProp) => {
 	};
 
 	const errorId = error && (errorToMessageId[error] || errorToMessageId.UNKNOWN);
+
+	const component = () => {
+		return (
+			<div className="two-col" style={{ display: "flex" }}>
+				<div style={{ width: "100%", position: "relative" }}>
+					<TextInput
+						value={inviteCode}
+						onChange={onChange}
+						placeholder="Enter invitation code"
+						hasError={!!error}
+					/>
+					{error && (
+						<small className="explainer error-message" style={{ top: "8px" }}>
+							<FormattedMessage id={errorId} defaultMessage="Invalid code." />
+						</small>
+					)}
+				</div>
+				<Button
+					className="control-button"
+					type="button"
+					onClick={onClickJoin}
+					loading={isLoading}
+					style={{ width: "10em", marginLeft: "20px" }}
+				>
+					<b style={{ fontSize: "15px" }}>Join</b>
+				</Button>
+			</div>
+		);
+	};
+
+	if (props?.useComponent) return component();
+
 	return (
-		<form className="standard-form" style={{ padding: "0 0 0 0" }} onSubmit={onClickJoin}>
+		<div className="standard-form" style={{ padding: "0 0 0 0" }}>
 			<fieldset className="form-body" style={{ padding: 0 }}>
 				<div className="border-bottom-box">
-					<h3>Is your team already on CodeStream?</h3>
+					<h3>
+						<FormattedMessage
+							id="joinTeam.alreadyTeam"
+							defaultMessage="Is your team already on CodeStream?"
+						/>
+					</h3>
 					<div id="controls">
 						<div className="control-group">
-							<p>Use your invitation code to connect with your teammates.</p>
-							<div className="two-col" style={{ display: "flex" }}>
-								<div style={{ width: "100%", position: "relative" }}>
-									<TextInput
-										value={inviteCode}
-										onChange={onChange}
-										placeholder="Enter invitation code"
-										hasError={!!error}
-									/>
-									{error && (
-										<small className="explainer error-message" style={{ top: "8px" }}>
-											<FormattedMessage id={errorId} defaultMessage="Invalid code." />
-										</small>
-									)}
-								</div>
-								<Button
-									className="control-button"
-									type="button"
-									onClick={onClickJoin}
-									loading={isLoading}
-									style={{ width: "10em", marginLeft: "20px" }}
-								>
-									<b style={{ fontSize: "15px" }}>Join</b>
-								</Button>
-							</div>
+							<p>
+								<FormattedMessage
+									id="joinTeam.invitationCode"
+									defaultMessage="Use your invitation code to connect with your teammates."
+								/>
+							</p>
+							{component()}
 						</div>
 					</div>
 				</div>
 			</fieldset>
-		</form>
+		</div>
 	);
-});
+};

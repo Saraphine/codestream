@@ -832,7 +832,7 @@ export class SimpleFilterSearchPanel extends Component<Props, State> {
 				action: () =>
 					HostApi.instance.send(OpenUrlRequestType, {
 						url:
-							"https://docs.codestream.com/userguide/features/filter-and-search/#advanced-search-syntax"
+							"https://docs.newrelic.com/docs/codestream/how-use-codestream/ui-overview/#filter-search"
 					})
 			}
 		].filter(item => this.props.lightningCodeReviewsEnabled || !item.lightningOnly);
@@ -970,7 +970,7 @@ export class SimpleFilterSearchPanel extends Component<Props, State> {
 					<div>
 						<p>
 							Feedback Requests are the building blocks of your team’s process.{" "}
-							<a href="https://docs.codestream.com/userguide/workflow/feedback-requests/">
+							<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/request-feedback/">
 								Learn more about how to use feedback requests.
 							</a>
 						</p>
@@ -981,7 +981,7 @@ export class SimpleFilterSearchPanel extends Component<Props, State> {
 	}
 }
 
-const mapStateToProps = (state: CodeStreamState): ConnectedProps => {
+const mapStateToProps = (state: CodeStreamState, _props): ConnectedProps => {
 	const { context, session, users, repos } = state;
 
 	const usernameMap = userSelectors.getUsernamesByIdLowerCase(state);

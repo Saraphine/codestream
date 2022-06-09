@@ -9,11 +9,13 @@ import { closePanel, invite, openPanel } from "./actions";
 import {
 	GetLatestCommittersRequestType,
 	GetReposScmRequestType,
-	ReposScm
+	ReposScm,
+	UpdateCompanyRequestType
 } from "@codestream/protocols/agent";
 import { Checkbox } from "../src/components/Checkbox";
 import { CSText } from "../src/components/CSText";
 import { Button } from "../src/components/Button";
+import * as Legacy from "../Stream/Button";
 import { Link } from "./Link";
 import Icon from "./Icon";
 import { confirmPopup } from "./Confirm";
@@ -29,10 +31,14 @@ import { FormattedMessage } from "react-intl";
 import { isEmailValid } from "../Authentication/Signup";
 import { OpenUrlRequestType, WebviewPanels } from "@codestream/protocols/webview";
 import { TelemetryRequestType } from "@codestream/protocols/agent";
-import { setOnboardStep, setShowFeedbackSmiley } from "../store/context/actions";
-import { getTestGroup } from "../store/context/reducer";
+import {
+	setOnboardStep,
+	handlePendingProtocolHandlerUrl,
+	clearPendingProtocolHandlerUrl,
+	clearForceRegion
+} from "../store/context/actions";
 
-const Step = styled.div`
+export const Step = styled.div`
 	margin: 0 auto;
 	text-align: left;
 	position: absolute;
@@ -70,8 +76,8 @@ const Step = styled.div`
 			font-size: 24px;
 			line-height: 1;
 			display: inline-block;
-			opacity: 0.5;
-			transform: scale(5);
+			opacity: 1;
+			transform: scale(7);
 			animation-duration: 2s;
 			animation-timing-function: ease-out;
 			animation-name: hoverin;
@@ -146,8 +152,8 @@ const Step = styled.div`
 		}
 
 		to {
-			transform: scale(5) translateY(0);
-			opacity: 0.5;
+			transform: scale(7) translateY(0);
+			opacity: 1;
 		}
 	}
 
@@ -191,24 +197,20 @@ export const ButtonRow = styled.div`
 	}
 `;
 
-const LinkRow = styled.div`
-	margin-top: 20px;
-	display: flex;
-	align-items: center;
-	button {
-		margin-left: auto;
-	}
+export const LinkRow = styled.div`
+	margin-top: 10px;
+	text-align: right;
 	a {
 		text-decoration: none;
 	}
 `;
 
-const CenterRow = styled.div`
+export const CenterRow = styled.div`
 	margin-top: 20px;
 	text-align: center;
 `;
 
-const Dots = styled.div<{ steps: number }>`
+export const Dots = styled.div<{ steps: number }>`
 	display: flex;
 	position: absolute;
 	top: calc(100vh - 30px);
@@ -217,7 +219,7 @@ const Dots = styled.div<{ steps: number }>`
 	transition: top 0.15s;
 `;
 
-const Dot = styled.div<{ selected?: boolean }>`
+export const Dot = styled.div<{ selected?: boolean }>`
 	width: 10px;
 	height: 10px;
 	border-radius: 5px;
@@ -227,13 +229,13 @@ const Dot = styled.div<{ selected?: boolean }>`
 	transition: opacity 0.25s;
 `;
 
-const OutlineBox = styled.div`
+export const OutlineBox = styled.div`
 	width: 100%;
 	border: 1px solid var(--base-border-color);
 	padding: 50px 0;
 `;
 
-const DialogRow = styled.div`
+export const DialogRow = styled.div`
 	display: flex;
 	padding: 10px 0;
 	&:first-child {
@@ -247,7 +249,7 @@ const DialogRow = styled.div`
 	}
 `;
 
-const SkipLink = styled.div`
+export const SkipLink = styled.div`
 	cursor: pointer;
 	text-align: center;
 	margin-top: 30px;
@@ -259,18 +261,18 @@ const SkipLink = styled.div`
 	}
 `;
 
-const Keybinding = styled.div`
+export const Keybinding = styled.div`
 	margin: 20px 0;
 	text-align: center;
 	transform: scale(1.5);
 `;
 
-const Sep = styled.div`
+export const Sep = styled.div`
 	border-top: 1px solid var(--base-border-color);
 	margin: 10px -20px 20px -20px;
 `;
 
-const OutlineNumber = styled.div`
+export const OutlineNumber = styled.div`
 	display: flex;
 	flex-shrink: 0;
 	align-items: center;
@@ -286,7 +288,7 @@ const OutlineNumber = styled.div`
 	color: var(--button-foreground-color);
 `;
 
-const ExpandingText = styled.div`
+export const ExpandingText = styled.div`
 	margin: 10px 0;
 	position: relative;
 
@@ -311,9 +313,73 @@ const ExpandingText = styled.div`
 	}
 `;
 
+export const CheckboxRow = styled.div`
+	padding: 20px 0 0 0;
+`;
 const EMPTY_ARRAY = [];
 
+const positionDots = () => {
+	requestAnimationFrame(() => {
+		const $active = document.getElementsByClassName("active")[0];
+		if ($active) {
+			const $dots = document.getElementById("dots");
+			if ($dots) $dots.style.top = `${$active.clientHeight - 30}px`;
+		}
+	});
+};
+
 export const Onboard = React.memo(function Onboard() {
+	const dispatch = useDispatch();
+	const derivedState = useSelector((state: CodeStreamState) => {
+		const user = state.users[state.session.userId!];
+		return {
+			currentStep: state.context.onboardStep,
+			teamMembers: getTeamMembers(state),
+			totalPosts: user.totalPosts || 0,
+			isInVSCode: state.ide.name === "VSC",
+			isInJetBrains: state.ide.name === "JETBRAINS"
+		};
+	}, shallowEqual);
+
+	const { currentStep } = derivedState;
+	let NUM_STEPS = 1;
+	const [lastStep, setLastStep] = useState(currentStep);
+	const skip = () => setStep(currentStep + 1);
+	const setStep = (step: number) => {
+		if (step === NUM_STEPS) {
+			dispatch(setOnboardStep(0));
+			dispatch(closePanel());
+			return;
+		}
+
+		setLastStep(currentStep);
+		dispatch(setOnboardStep(step));
+		setTimeout(() => scrollToTop(), 250);
+	};
+
+	const scrollToTop = () => {
+		requestAnimationFrame(() => {
+			const $container = document.getElementById("scroll-container");
+			if ($container) $container.scrollTo({ top: 0, behavior: "smooth" });
+		});
+	};
+
+	return (
+		<>
+			<div id="scroll-container" className="onboarding-page">
+				<div className="standard-form">
+					<fieldset className="form-body">
+						<div className="border-bottom-box">
+							<InviteTeammates className={"active"} skip={skip} unwrap={true} />
+						</div>
+					</fieldset>
+				</div>
+			</div>
+		</>
+	);
+});
+
+export const OnboardFull = React.memo(function Onboard() {
 	const dispatch = useDispatch();
 	const derivedState = useSelector((state: CodeStreamState) => {
 		const { providers } = state;
@@ -461,16 +527,6 @@ export const Onboard = React.memo(function Onboard() {
 		});
 	};
 
-	const positionDots = () => {
-		requestAnimationFrame(() => {
-			const $active = document.getElementsByClassName("active")[0];
-			if ($active) {
-				const $dots = document.getElementById("dots");
-				if ($dots) $dots.style.top = `${$active.clientHeight - 30}px`;
-			}
-		});
-	};
-
 	const className = (step: number) => {
 		if (step === currentStep) return "active";
 		if (step === lastStep) return "last-active";
@@ -521,7 +577,7 @@ export const Onboard = React.memo(function Onboard() {
 								/>
 								<FeedbackRequests className={className(3)} skip={skip} />
 								<PullRequests className={className(4)} skip={skip} />
-								<InviteTeammates className={className(5)} skip={skip} positionDots={positionDots} />
+								<InviteTeammates className={className(5)} skip={skip} />
 							</>
 						) : (
 							<>
@@ -533,7 +589,7 @@ export const Onboard = React.memo(function Onboard() {
 									showNextMessagingStep={showNextMessagingStep}
 									setShowNextMessagingStep={setShowNextMessagingStep}
 								/>
-								<InviteTeammates className={className(4)} skip={skip} positionDots={positionDots} />
+								<InviteTeammates className={className(4)} skip={skip} />
 								<CreateCodemark className={className(CODEMARK_STEP)} skip={skip} />
 							</>
 						)}
@@ -814,7 +870,7 @@ const PullRequests = (props: { className: string; skip: Function }) => {
 	}
 };
 
-const ConnectCodeHostProvider = (props: { className: string; skip: Function }) => {
+export const ConnectCodeHostProvider = (props: { className: string; skip: Function }) => {
 	const derivedState = useSelector((state: CodeStreamState) => {
 		const { providers } = state;
 
@@ -1003,16 +1059,31 @@ const ConnectMessagingProvider = (props: {
 	);
 };
 
-const InviteTeammates = (props: { className: string; skip: Function; positionDots: Function }) => {
+export const InviteTeammates = (props: { className: string; skip: Function; unwrap?: boolean }) => {
 	const dispatch = useDispatch();
+
 	const derivedState = useSelector((state: CodeStreamState) => {
-		const team = state.teams[state.context.currentTeamId];
-		const dontSuggestInvitees = team.settings ? team.settings.dontSuggestInvitees || {} : {};
+		const user = state.users[state.session.userId!];
+		const team =
+			state.teams && state.context.currentTeamId
+				? state.teams[state.context.currentTeamId]
+				: undefined;
+		const dontSuggestInvitees =
+			team && team.settings ? team.settings.dontSuggestInvitees || {} : {};
+		const currentUserIsAdmin = (team?.adminIds || []).includes(user.id);
+		const domain = user.email?.split("@")[1].toLowerCase();
 
 		return {
 			providers: state.providers,
 			dontSuggestInvitees,
-			teamMembers: getTeamMembers(state)
+			companyName: team ? state.companies[team.companyId]?.name : "your organization",
+			companyId: team ? state.companies[team.companyId]?.id : null,
+			teamMembers: team ? getTeamMembers(state) : [],
+			domain,
+			isWebmail: state.configs?.isWebmail,
+			webviewFocused: state.context.hasFocus,
+			pendingProtocolHandlerUrl: state.context.pendingProtocolHandlerUrl,
+			currentUserIsAdmin
 		};
 	}, shallowEqual);
 
@@ -1021,11 +1092,17 @@ const InviteTeammates = (props: { className: string; skip: Function; positionDot
 	const [inviteEmailValidity, setInviteEmailValidity] = useState<boolean[]>(
 		new Array(50).fill(true)
 	);
+	// Checkbox should be checked unless its a newrelic domain, for now
+	const [allowDomainBasedJoining, setAllowDomainBasedJoining] = useState(
+		derivedState.domain !== "newrelic.com"
+	);
 	const [sendingInvites, setSendingInvites] = useState(false);
-	const [skipSuggestedField, setSkipSuggestedField] = useState<{ [email: string]: boolean }>({});
+	const [addSuggestedField, setAddSuggestedField] = useState<{ [email: string]: boolean }>({});
 	const [suggestedInvitees, setSuggestedInvitees] = useState<any[]>([]);
 
 	useDidMount(() => {
+		if (derivedState.webviewFocused)
+			HostApi.instance.track("Page Viewed", { "Page Name": "Invite Teammates - Onboarding" });
 		getSuggestedInvitees();
 	});
 
@@ -1036,7 +1113,9 @@ const InviteTeammates = (props: { className: string; skip: Function; positionDot
 
 		const { teamMembers, dontSuggestInvitees } = derivedState;
 		const suggested: any[] = [];
-		Object.keys(committers).forEach(email => {
+		Object.keys(committers).forEach((email, index) => {
+			// only show 15, list is too long for onboarding otherwise
+			if (index > 14) return;
 			if (email.match(/noreply/)) return;
 			// If whitespace in domain, invalid email
 			if (email.match(/.*(@.* .+)/)) return;
@@ -1046,7 +1125,9 @@ const InviteTeammates = (props: { className: string; skip: Function; positionDot
 			// allow some emails through that shouldn't be through, but
 			// won't block any that shouldn't be
 			if (email.match(/(?<!"") (?!"")(?=((?:[^"]*"){2})*[^"]*$)/)) return;
-			if (teamMembers.find(user => user.email === email)) return;
+			// If no period in domain, invalid email
+			if (!email.match(/.*@.*\..*/)) return;
+			if (teamMembers?.find(user => user.email === email)) return;
 			if (dontSuggestInvitees[email.replace(/\./g, "*")]) return;
 			suggested.push({ email, fullName: committers[email] || email });
 		});
@@ -1054,26 +1135,9 @@ const InviteTeammates = (props: { className: string; skip: Function; positionDot
 		if (suggested.length === 0) setNumInviteFields(3);
 	};
 
-	const confirmSkip = () => {
-		confirmPopup({
-			title: "Skip this step?",
-			message:
-				"CodeStream is more powerful when you collaborate. You can invite team members at any time, but don’t hoard all the fun.",
-			centered: false,
-			buttons: [
-				{ label: "Go Back", className: "control-button" },
-				{
-					label: "Skip Step",
-					action: () => props.skip(),
-					className: "secondary"
-				}
-			]
-		});
-	};
-
 	const addInvite = () => {
 		setNumInviteFields(numInviteFields + 1);
-		setTimeout(() => props.positionDots(), 250);
+		setTimeout(() => positionDots(), 250);
 	};
 
 	const onInviteEmailChange = (value, index) => {
@@ -1101,14 +1165,16 @@ const InviteTeammates = (props: { className: string; skip: Function; positionDot
 		}
 	};
 
-	const sendInvites = async () => {
+	const handleGetStarted = async () => {
+		const { pendingProtocolHandlerUrl } = derivedState;
+
 		setSendingInvites(true);
 
 		let index = 0;
 		while (index <= suggestedInvitees.length) {
 			if (suggestedInvitees[index]) {
 				const email = suggestedInvitees[index].email;
-				if (!skipSuggestedField[email]) await inviteEmail(email, "Onboarding Suggestion");
+				if (addSuggestedField[email]) await inviteEmail(email, "Onboarding Suggestion");
 			}
 			index++;
 		}
@@ -1119,28 +1185,69 @@ const InviteTeammates = (props: { className: string; skip: Function; positionDot
 			index++;
 		}
 
+		if (allowDomainBasedJoining && displayDomainJoinCheckbox()) {
+			updateCompanyRequestType();
+		}
+
+		if (pendingProtocolHandlerUrl) {
+			await dispatch(handlePendingProtocolHandlerUrl(pendingProtocolHandlerUrl));
+			dispatch(clearPendingProtocolHandlerUrl());
+			dispatch(clearForceRegion());
+		}
+
 		setSendingInvites(false);
+
 		props.skip();
 	};
 
-	return (
-		<Step className={props.className}>
+	const updateCompanyRequestType = async () => {
+		const { domain, companyId } = derivedState;
+
+		if (domain && companyId) {
+			try {
+				await HostApi.instance.send(UpdateCompanyRequestType, {
+					companyId,
+					domainJoining: allowDomainBasedJoining ? [domain] : []
+				});
+				HostApi.instance.track("Domain Joining Enabled");
+			} catch (ex) {
+				console.error(ex);
+				return;
+			}
+		}
+	};
+
+	const displayDomainJoinCheckbox = () => {
+		const { domain, isWebmail, currentUserIsAdmin } = derivedState;
+
+		return currentUserIsAdmin && domain && isWebmail === false;
+	};
+
+	const component = () => {
+		const { domain } = derivedState;
+
+		return (
 			<div className="body">
-				<h3>Invite your team</h3>
-				<p className="explainer">We recommend exploring CodeStream with your team</p>
-				<Dialog>
+				<h3>Invite your teammates</h3>
+				{suggestedInvitees.length === 0 && (
+					<p className="explainer">We recommend exploring CodeStream with your team</p>
+				)}
+				<div>
 					{suggestedInvitees.length > 0 && (
 						<>
-							<p className="explainer left">Suggestions below are based on your git history</p>
+							<p className="explainer left">
+								Discuss code and investigate errors with your teammates. Here are some suggestions
+								based on your git history.
+							</p>
 							{suggestedInvitees.map(user => {
 								return (
 									<Checkbox
 										name={user.email}
-										checked={!skipSuggestedField[user.email]}
+										checked={addSuggestedField[user.email]}
 										onChange={() => {
-											setSkipSuggestedField({
-												...skipSuggestedField,
-												[user.email]: !skipSuggestedField[user.email]
+											setAddSuggestedField({
+												...addSuggestedField,
+												[user.email]: !addSuggestedField[user.email]
 											});
 										}}
 									>
@@ -1174,16 +1281,41 @@ const InviteTeammates = (props: { className: string; skip: Function; positionDot
 						);
 					})}
 					<LinkRow style={{ minWidth: "180px" }}>
-						<Link onClick={addInvite}>+ Add more</Link>
-						<Button isLoading={sendingInvites} onClick={sendInvites}>
-							Send invites
-						</Button>
+						<Link onClick={addInvite}>+ Add another</Link>
 					</LinkRow>
-				</Dialog>
-				<SkipLink onClick={confirmSkip}>I'll do this later</SkipLink>
+
+					{displayDomainJoinCheckbox() && (
+						<CheckboxRow>
+							<Checkbox
+								name="allow-domain-based-joining"
+								checked={allowDomainBasedJoining}
+								onChange={(value: boolean) => {
+									setAllowDomainBasedJoining(!allowDomainBasedJoining);
+								}}
+							>
+								Let anyone with the <b>{domain}</b> email address join this organization
+							</Checkbox>
+						</CheckboxRow>
+					)}
+
+					<div>
+						<Legacy.default
+							className="row-button"
+							loading={sendingInvites}
+							onClick={handleGetStarted}
+						>
+							<div className="copy">Get Started</div>
+							<Icon name="chevron-right" />
+						</Legacy.default>
+					</div>
+				</div>
 			</div>
-		</Step>
-	);
+		);
+	};
+	if (props.unwrap) {
+		return component();
+	}
+	return <Step className={props.className}>{component()}</Step>;
 };
 
 const CreateCodemark = (props: { className: string; skip: Function }) => {
@@ -1285,10 +1417,11 @@ const ProviderButtons = (props: { providerIds: string[]; setShowNextMessagingSte
 								if (connected) return;
 								if (provider.id == "login*microsoftonline*com") {
 									HostApi.instance.send(OpenUrlRequestType, {
-										url: "https://docs.codestream.com/userguide/features/msteams-integration"
+										url:
+											"https://docs.newrelic.com/docs/codestream/codestream-integrations/msteams-integration/"
 									});
 									HostApi.instance.send(TelemetryRequestType, {
-										eventName: "Messaging Service Connected",
+										eventName: "Service Connected",
 										properties: {
 											Service: provider.name,
 											"Connection Location": "Onboard"

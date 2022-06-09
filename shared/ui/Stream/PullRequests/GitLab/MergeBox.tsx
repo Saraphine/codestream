@@ -6,7 +6,7 @@ import { Button, ButtonVariant } from "@codestream/webview/src/components/Button
 import { OutlineBox, FlexRow } from "./PullRequest";
 import { Checkbox } from "@codestream/webview/src/components/Checkbox";
 import { CodeStreamState } from "@codestream/webview/store";
-import { setUserPreference } from "../../actions";
+// import { setUserPreference } from "../../actions";
 import { Link } from "../../Link";
 import { CommandLineInstructions } from "./CommandLineInstructions";
 import styled from "styled-components";
@@ -36,16 +36,8 @@ export const IconButton = styled.div`
 export const MergeBox = props => {
 	const dispatch = useDispatch();
 	const derivedState = useSelector((state: CodeStreamState) => {
-		const { preferences } = state;
-		const deleteBranch =
-			"pullRequestDeleteSourceBranch" in preferences
-				? preferences.pullRequestDeleteSourceBranch
-				: true;
-		const squash = preferences.pullRequestSquashCommits;
 		const pr = getCurrentProviderPullRequestObject(state) as GitLabMergeRequest;
 		return {
-			deleteBranch,
-			squash,
 			pr: pr,
 			pipeline: pr.headPipeline,
 			prRoot: getCurrentProviderPullRequestRootObject(state) as GitLabMergeRequestWrapper
@@ -60,10 +52,25 @@ export const MergeBox = props => {
 
 	const _defaultMergeText = `Merge branch '${derivedState.pr.headRefName}' into '${derivedState.pr.baseRefName}'\n\n${derivedState.pr.title}`;
 	const _defaultMergeTextSuffix = `See merge request ${derivedState.pr.references.full}`;
-	const { deleteBranch, squash } = derivedState;
+	const [deleteBranch, setDeleteBranch] = useState(false);
+	const [squashChecked, setSquashChecked] = useState(false);
 
 	useDidMount(() => {
 		setCommitMessage(`${_defaultMergeText}\n${_defaultMergeTextSuffix}`);
+	});
+
+	useDidMount(() => {
+		if (derivedState.prRoot && derivedState.prRoot.project.removeSourceBranchAfterMerge) {
+			setDeleteBranch(true);
+		} else {
+			setDeleteBranch(false);
+		}
+		if (
+			derivedState.prRoot &&
+			(derivedState.prRoot.project.squashOption === "default_on" ||
+				derivedState.prRoot.project.squashOption === "always")
+		)
+			setSquashChecked(true);
 	});
 
 	useEffect(() => {
@@ -86,7 +93,7 @@ export const MergeBox = props => {
 				api("mergePullRequest", {
 					message: message,
 					deleteSourceBranch: deleteBranch,
-					squashCommits: squash,
+					squashCommits: squashChecked,
 					mergeWhenPipelineSucceeds: mergeWhenPipelineSucceeds
 				})
 			);
@@ -102,7 +109,7 @@ export const MergeBox = props => {
 	};
 
 	const toggleWorkInProgress = async () => {
-		const onOff = !props.pr.workInProgress;
+		const onOff = !props.pr.isDraft;
 		props.setIsLoadingMessage(onOff ? "Marking as draft..." : "Marking as ready...");
 		await dispatch(
 			api("setWorkInProgressOnPullRequest", {
@@ -171,7 +178,7 @@ export const MergeBox = props => {
 		);
 	}
 
-	if (props.pr.workInProgress) {
+	if (props.pr.isDraft) {
 		return (
 			<OutlineBox>
 				<FlexRow style={{ flexWrap: "nowrap" }}>
@@ -317,7 +324,15 @@ export const MergeBox = props => {
 
 	if (derivedState.pr.divergedCommitsCount > 0) {
 		if (derivedState.prRoot.project.mergeMethod === "merge") {
-			setStandardMergeOptions();
+			if (
+				derivedState.prRoot.project.mergeRequest?.conflicts &&
+				derivedState.prRoot.project.mergeRequest.conflicts === true
+			) {
+				mergeDisabled = true;
+				headerLabel = <>Merge blocked: merge conflicts must be resolved.</>;
+			} else {
+				setStandardMergeOptions();
+			}
 		} else {
 			mergeDisabled = true;
 			verb = "Rebase";
@@ -374,39 +389,60 @@ export const MergeBox = props => {
 				)}
 				{!headerLabel && (
 					<>
-						{derivedState.prRoot.project.removeSourceBranchAfterMerge && (
-							<div className="pad-left">
-								<Checkbox
-									checked={deleteBranch}
-									name="delete-branch"
-									noMargin
-									onChange={() => {
-										dispatch(setUserPreference(["pullRequestDeleteSourceBranch"], !deleteBranch));
-									}}
-								>
-									Delete source branch
-								</Checkbox>
-							</div>
-						)}
 						<div className="pad-left">
 							<Checkbox
-								checked={squash}
-								name="squash"
+								checked={deleteBranch}
+								name="delete-branch"
 								noMargin
 								onChange={() => {
-									dispatch(setUserPreference(["pullRequestSquashCommits"], !squash));
+									setDeleteBranch(!deleteBranch);
 								}}
 							>
-								Squash commits
+								Delete source branch
 							</Checkbox>
 						</div>
-						<div className="pl5">
-							<Link
-								href={`${derivedState.pr.baseWebUrl}/help/user/project/merge_requests/squash_and_merge`}
-							>
-								<Icon name="question" title="What is squashing?" placement="top" />
-							</Link>
-						</div>
+						{derivedState.prRoot && (
+							<>
+								{derivedState.prRoot.project.squashOption === "always" ? (
+									<div className="pad-left">
+										<Checkbox
+											checked={true}
+											name="squash"
+											noMargin
+											onChange={() => {}}
+											disabled=" "
+											disabledEmpty={true}
+										>
+											Squash commits
+										</Checkbox>
+									</div>
+								) : (
+									derivedState.prRoot.project.squashOption !== "never" && (
+										<div className="pad-left">
+											<Checkbox
+												checked={squashChecked}
+												name="squash"
+												noMargin
+												onChange={() => {
+													setSquashChecked(!squashChecked);
+												}}
+											>
+												Squash commits
+											</Checkbox>
+										</div>
+									)
+								)}
+								{derivedState.prRoot.project.squashOption !== "never" && (
+									<div className="pl5">
+										<Link
+											href={`${derivedState.pr.baseWebUrl}/help/user/project/merge_requests/squash_and_merge`}
+										>
+											<Icon name="question" title="What is squashing?" placement="top" />
+										</Link>
+									</div>
+								)}
+							</>
+						)}
 					</>
 				)}
 				{headerLabel && <div className="pad-left">{headerLabel}</div>}

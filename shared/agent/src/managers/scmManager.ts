@@ -158,6 +158,11 @@ export class ScmManager {
 		let branches: (string | undefined)[] = [];
 		let remotes: GitRemote[][] = [];
 		let user: CSMe | undefined = undefined;
+
+		let withSubDirectoriesDepth: number | undefined = undefined;
+
+		const { repoIdentifier } = SessionContainer.instance();
+
 		try {
 			const { git } = SessionContainer.instance();
 			repositories = Array.from(await git.getRepositories());
@@ -167,11 +172,19 @@ export class ScmManager {
 			if (request && request.includeCurrentBranches) {
 				branches = await Promise.all(repositories.map(repo => git.getCurrentBranch(repo.path)));
 			}
-			if (request && request.includeProviders) {
+			if (request && (request.includeRemotes || request.includeProviders)) {
 				remotes = await Promise.all(repositories.map(repo => repo.getRemotes()));
 			}
 			if (request && request.includeConnectedProviders) {
-				user = (await SessionContainer.instance().users.getMe()).user;
+				user = await SessionContainer.instance().users.getMe();
+			}
+			if (
+				request &&
+				request.withSubDirectoriesDepth != null &&
+				request.withSubDirectoriesDepth > 0
+			) {
+				// only allow 2!
+				withSubDirectoriesDepth = 2;
 			}
 		} catch (ex) {
 			gitError = ex.toString();
@@ -186,15 +199,33 @@ export class ScmManager {
 		if (request && request.includeConnectedProviders) {
 			response.repositories = await Promise.all(
 				repositories.map(async (repo, index) => {
-					const repoScm = GitRepositoryExtensions.toRepoScm(repo, branches[index], remotes[index]);
+					const repoScm = GitRepositoryExtensions.toRepoScm(
+						repo,
+						branches[index],
+						remotes[index],
+						withSubDirectoriesDepth
+					);
 					repoScm.providerId = (await repo.getPullRequestProvider(user))?.providerId;
 					return repoScm;
 				})
 			);
 		} else {
 			response.repositories = repositories.map((repo, index) =>
-				GitRepositoryExtensions.toRepoScm(repo, branches[index], remotes[index])
+				GitRepositoryExtensions.toRepoScm(
+					repo,
+					branches[index],
+					remotes[index],
+					withSubDirectoriesDepth
+				)
 			);
+		}
+
+		if (request && request.guessProjectTypes) {
+			for (const repo of response.repositories) {
+				const { projectType, projects } = await repoIdentifier.identifyRepo(repo);
+				repo.projectType = projectType;
+				repo.projects = projects;
+			}
 		}
 
 		return response;
@@ -334,10 +365,23 @@ export class ScmManager {
 
 		try {
 			if (!documentUri) {
-				if (!repoId) throw new Error(`A uri or repoId is required`);
+				if (!repoId) {
+					const missingRepoAndDocument = `A uri or repoId is required`;
+					Logger.error(new Error(missingRepoAndDocument), cc, missingRepoAndDocument, {
+						branch
+					});
+					return { error: missingRepoAndDocument };
+				}
 
 				const repo = await git.getRepositoryById(repoId);
-				if (repo == null) throw new Error(`No repository could be found for repoId=${repoId}`);
+				if (repo == null) {
+					const missingRepo = `No repository could be found for repoId=${repoId}`;
+					Logger.error(new Error(missingRepo), cc, missingRepo, {
+						repoId,
+						branch
+					});
+					return { error: missingRepo };
+				}
 
 				repoPath = repo.path;
 			} else {
@@ -345,12 +389,20 @@ export class ScmManager {
 				repoPath = (await git.getRepoRoot(uri.fsPath)) || "";
 			}
 
-			if (repoPath !== undefined) {
+			if (repoPath) {
 				await git.switchBranch(repoPath, branch);
 				this.session.agent.sendNotification(DidChangeBranchNotificationType, {
 					repoPath,
 					branch
 				});
+			} else {
+				const errorMessage = "missing repoPath";
+				Logger.error(new Error(errorMessage), cc, errorMessage, {
+					documentUri,
+					branch,
+					repoId
+				});
+				return { error: errorMessage };
 			}
 		} catch (ex) {
 			gitError = ex.toString();
@@ -433,7 +485,7 @@ export class ScmManager {
 					const repo = await git.getRepositoryByFilePath(repoPath);
 					repoId = repo && repo.id;
 
-					const gitRemotes = await git.getRepoRemotes(repoPath);
+					const gitRemotes = await git.getRepoRemotes(repoPath, true);
 					remotes = [...Iterables.map(gitRemotes, r => ({ name: r.name, url: r.normalizedUrl }))];
 
 					if (commits && commits.length > 1 && !startCommit && includeLatestCommit) {
@@ -625,14 +677,14 @@ export class ScmManager {
 			repo = undefined;
 		}
 		if (!repoPath) {
-			repoPath = await repositoryMappings.getByRepoId(review.reviewChangesets[0].repoId);
+			repo = await git.getRepositoryById(review.reviewChangesets[0].repoId);
+			repoPath = repo?.path;
 		}
 		if (!repoPath) {
 			throw new Error(
 				`Cannot determine repository path. Please open review's repository before amending it.`
 			);
 		}
-		repo = await git.getRepositoryByFilePath(repoPath);
 		if (!repo || !repo.id) throw new Error(`Cannot determine repo at ${repoPath}`);
 		if (git.isRebasing(repoPath)) throw new Error(`Repository ${repoPath} is rebasing`);
 		const branch = await git.getCurrentBranch(repoPath);
@@ -1122,12 +1174,14 @@ export class ScmManager {
 
 	private async getFileRangeInfo({
 		uri: documentUri,
+		gitSha,
 		range,
 		dirty,
 		contents,
 		skipBlame
 	}: GetRangeScmInfoRequest): Promise<GetRangeScmInfoResponse> {
 		const cc = Logger.getCorrelationContext();
+		const { git } = SessionContainer.instance();
 		range = Ranges.ensureStartBeforeEnd(range);
 		const uri = URI.parse(documentUri);
 
@@ -1139,14 +1193,22 @@ export class ScmManager {
 
 		let document;
 		if (contents == null) {
-			document = Container.instance().documents.get(documentUri);
-			if (document === undefined) {
-				const ex = new Error(`No document could be found for Uri(${documentUri})`);
-				Logger.error(ex, cc);
-				throw ex;
+			if (gitSha) {
+				contents = await git.getFileContentForRevision(uri, gitSha, range);
+				if (contents === undefined) {
+					const ex = new Error(`No document could be found for Uri(${documentUri}) @ ${gitSha}`);
+					Logger.error(ex, cc);
+					throw ex;
+				}
+			} else {
+				document = Container.instance().documents.get(documentUri);
+				if (document === undefined) {
+					const ex = new Error(`No document could be found for Uri(${documentUri})`);
+					Logger.error(ex, cc);
+					throw ex;
+				}
+				contents = document.getText(range);
 			}
-
-			contents = document.getText(range);
 		}
 
 		let gitError;
@@ -1154,8 +1216,6 @@ export class ScmManager {
 		let repoId;
 		let ignored;
 		if (uri.scheme === "file") {
-			const { git } = SessionContainer.instance();
-
 			try {
 				repoPath = await git.getRepoRoot(uri.fsPath);
 				if (repoPath !== undefined) {
@@ -1165,7 +1225,7 @@ export class ScmManager {
 					}
 
 					branch = await git.getCurrentBranch(uri.fsPath);
-					rev = await git.getFileCurrentRevision(uri.fsPath);
+					rev = gitSha || (await git.getFileCurrentRevision(uri.fsPath));
 					const repo = await git.getRepositoryByFilePath(uri.fsPath);
 					repoId = repo && repo.id;
 					const repoHeadHash = await git.getRepoHeadRevision(repoPath);
@@ -1183,7 +1243,7 @@ export class ScmManager {
 					if (!skipBlame) {
 						let blameContents;
 						// Only fill out the blame contents if the file is dirty (so we can blame the dirty version)
-						if (dirty) {
+						if (dirty && !gitSha) {
 							if (document === undefined) {
 								document = Container.instance().documents.get(documentUri);
 								if (document === undefined) {
@@ -1199,6 +1259,7 @@ export class ScmManager {
 						const gitAuthors = await git.getFileAuthors(uri.fsPath, {
 							startLine: range.start.line,
 							endLine: range.end.line,
+							ref: gitSha,
 							contents: blameContents,
 							retryWithTrimmedEndOnFailure: true
 						});
@@ -1229,6 +1290,7 @@ export class ScmManager {
 							repoPath: repoPath,
 							repoId,
 							revision: rev!,
+							fixedGitSha: gitSha != null,
 							authors: authors || [],
 							remotes: remotes || [],
 							branch
@@ -1265,13 +1327,7 @@ export class ScmManager {
 		const { git, repositoryMappings } = SessionContainer.instance();
 
 		const repo = await git.getRepositoryById(request.repoId);
-		let repoPath;
-		if (repo) {
-			repoPath = repo.path;
-		} else {
-			repoPath = await repositoryMappings.getByRepoId(request.repoId);
-		}
-
+		const repoPath = repo?.path;
 		if (!repoPath) throw new Error(`Could not load repo with ID ${request.repoId}`);
 
 		const diff = await git.getDiffBetweenCommits(
@@ -1356,12 +1412,7 @@ export class ScmManager {
 		const { git, repositoryMappings } = SessionContainer.instance();
 
 		const repo = await git.getRepositoryById(request.repoId);
-		let repoPath = "";
-		if (repo) {
-			repoPath = repo.path;
-		} else {
-			repoPath = (await repositoryMappings.getByRepoId(request.repoId)) || "";
-		}
+		const repoPath = repo?.path || "";
 
 		const commit = await git.getCommit(repoPath, request.branch);
 		return { shortMessage: commit ? commit.shortMessage : "" };
@@ -1372,12 +1423,7 @@ export class ScmManager {
 		const { git, repositoryMappings } = SessionContainer.instance();
 
 		const repo = await git.getRepositoryById(request.repoId);
-		let repoPath = "";
-		if (repo) {
-			repoPath = repo.path;
-		} else {
-			repoPath = (await repositoryMappings.getByRepoId(request.repoId)) || "";
-		}
+		const repoPath = repo?.path || "";
 
 		const { success, error } = await git.commitAndPush(
 			repoPath,
@@ -1460,19 +1506,23 @@ export class ScmManager {
 	): Promise<GetFileContentsAtRevisionResponse> {
 		const { git, repositoryMappings } = SessionContainer.instance();
 
-		const repo = await git.getRepositoryById(request.repoId);
 		let repoPath;
-		if (repo) {
-			repoPath = repo.path;
+		if (request.repoId) {
+			const repo = await git.getRepositoryById(request.repoId);
+			repoPath = repo?.path;
 		} else {
-			repoPath = await repositoryMappings.getByRepoId(request.repoId);
+			repoPath = await git.getRepoRoot(request.path);
 		}
 
 		if (!repoPath) {
-			throw new Error(`getFileContentsAtRevision: Could not load repo with ID ${request.repoId}`);
+			if (request.repoId) {
+				throw new Error(`getFileContentsAtRevision: Could not load repo with ID ${request.repoId}`);
+			} else {
+				throw new Error(`getFileContentsAtRevision: Could not find repo for file ${request.path}`);
+			}
 		}
 
-		const filePath = paths.join(repoPath, request.path);
+		const filePath = request.repoId ? paths.join(repoPath, request.path) : request.path;
 		if (request.fetchAllRemotes) {
 			await git.fetchAllRemotes(repoPath);
 		}
@@ -1489,13 +1539,7 @@ export class ScmManager {
 		const { git, repositoryMappings } = SessionContainer.instance();
 
 		const repo = await git.getRepositoryById(request.repoId);
-		let repoPath;
-		if (repo) {
-			repoPath = repo.path;
-		} else {
-			repoPath = await repositoryMappings.getByRepoId(request.repoId);
-		}
-
+		const repoPath = repo?.path;
 		if (!repoPath) throw new Error(`diffBranches: Could not load repo with ID ${request.repoId}`);
 
 		const filesChanged = (await git.diffBranches(repoPath, request.baseRef, request.headRef)) || [];
@@ -1504,23 +1548,19 @@ export class ScmManager {
 		};
 	}
 
-	@log()
 	@lspHandler(FetchForkPointRequestType)
+	@log()
 	async getForkPointRequestType(
 		request: FetchForkPointRequest
 	): Promise<FetchForkPointResponse | undefined> {
 		const cc = Logger.getCorrelationContext();
-		const { git, repositoryMappings } = SessionContainer.instance();
+		const { git } = SessionContainer.instance();
 
 		const repo = await git.getRepositoryById(request.repoId);
-		let repoPath: string | undefined;
-		if (repo) {
-			repoPath = repo.path;
-		} else {
-			repoPath = await repositoryMappings.getByRepoId(request.repoId);
-		}
+		const repoPath = repo?.path;
 
 		if (!repoPath) {
+			Logger.warn("getForkPointRequestType: no repoPath");
 			return {
 				sha: "",
 				error: {
@@ -1529,6 +1569,7 @@ export class ScmManager {
 			};
 		}
 		if (!request.baseSha) {
+			Logger.warn("getForkPointRequestType: no baseSha");
 			return {
 				sha: "",
 				error: {
@@ -1538,6 +1579,7 @@ export class ScmManager {
 			};
 		}
 		if (!request.headSha) {
+			Logger.warn("getForkPointRequestType: no headSha");
 			return {
 				sha: "",
 				error: {
@@ -1547,8 +1589,9 @@ export class ScmManager {
 			};
 		}
 		try {
+			let fetchReferenceFailed = false;
 			if (repo && request.ref) {
-				await git.fetchReference(repo, request.ref);
+				fetchReferenceFailed = !(await git.fetchReference(repo, request.ref));
 			}
 			const shas = [request.baseSha, request.headSha];
 			const results = await Promise.all(
@@ -1568,6 +1611,17 @@ export class ScmManager {
 				(await git.getRepoBranchForkPoint(repoPath, request.baseSha, request.headSha)) || "";
 
 			if (!forkPointSha) {
+				if (fetchReferenceFailed) {
+					Logger.warn("getForkPointRequestType: ref not found");
+					return {
+						sha: "",
+						error: {
+							message: "ref not found",
+							type: "REPO_NOT_FOUND"
+						}
+					};
+				}
+
 				Logger.warn(
 					`getForkPointRequestType: Could not find forkpoint for shas ${shas.join(
 						" and "
@@ -1600,12 +1654,7 @@ export class ScmManager {
 		const { git, scm: scmManager, repositoryMappings } = SessionContainer.instance();
 
 		const repo = await git.getRepositoryById(request.repoId);
-		let repoPath: string | undefined;
-		if (repo) {
-			repoPath = repo.path;
-		} else {
-			repoPath = await repositoryMappings.getByRepoId(request.repoId);
-		}
+		const repoPath = repo?.path;
 
 		if (!repoPath) {
 			throw new Error(`Could not load repo with ID ${request.repoId}`);

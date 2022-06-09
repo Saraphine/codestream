@@ -133,3 +133,19 @@ export const AddBlameMapRequestType = new RequestType<
 	void,
 	void
 >("codestream/team/add-blame-map");
+
+export interface DeleteBlameMapRequest {
+	teamId: string;
+	email: string;
+}
+
+export interface DeleteBlameMapResponse {
+	team: CSTeam;
+}
+
+export const DeleteBlameMapRequestType = new RequestType<
+	DeleteBlameMapRequest,
+	DeleteBlameMapResponse,
+	void,
+	void
+>("codestream/team/delete-blame-map");

@@ -17,7 +17,10 @@ export class TelemetryService {
 	private _readyPromise: Promise<void>;
 	private _firstSessionStartedAt?: number;
 	private _firstSessionTimesOutAfter?: number;
-	private _eventQueue: { event: string, data?: { [key: string]: string | number | boolean } }[] = [];
+	private _eventQueue: {
+		event: string;
+		data?: { [key: string]: string | number | boolean };
+	}[] = [];
 
 	private _onReady: () => void = () => {};
 
@@ -38,7 +41,11 @@ export class TelemetryService {
 
 		session.ready().then(() => this.initialize());
 
-		const props = { ...opts, Endpoint: session.versionInfo.ide.name, "Endpoint Detail": session.versionInfo.ide.detail };
+		const props = {
+			...opts,
+			Endpoint: session.versionInfo.ide.name,
+			"Endpoint Detail": session.versionInfo.ide.detail
+		};
 		this._superProps = props;
 		this._hasOptedOut = hasOptedOut;
 		this._anonymousId = uuid();
@@ -86,7 +93,7 @@ export class TelemetryService {
 		} else {
 			this.setConsent(!Boolean(preferences.telemetryOptOut));
 		}
-	}
+	};
 
 	identify(id: string, props?: { [key: string]: any }) {
 		this._distinctId = id;
@@ -107,12 +114,35 @@ export class TelemetryService {
 		}
 	}
 
+	setAnonymousId(id: string) {
+		if (this._hasOptedOut || this._segmentInstance == null) {
+			return;
+		}
+		try {
+			Logger.debug(`Telemetry setAnonymousId ${id}`);
+			this._anonymousId = id;
+			this._segmentInstance.identify({
+				anonymousId: id
+			});
+			this._segmentInstance.flush();
+		} catch (ex) {
+			Logger.error(ex);
+		}
+	}
+
 	setConsent(hasConsented: boolean) {
 		this._hasOptedOut = !hasConsented;
 	}
 
 	setSuperProps(props: { [key: string]: string | number | boolean }) {
 		this._superProps = props;
+	}
+
+	addSuperProps(props: { [key: string]: string | number | boolean }) {
+		this._superProps = {
+			...this._superProps,
+			...props
+		};
 	}
 
 	setFirstSessionProps(firstSessionStartedAt: number, firstSessionTimesOutAfter: number) {
@@ -125,6 +155,7 @@ export class TelemetryService {
 		const cc = Logger.getCorrelationContext();
 
 		if (this._hasOptedOut || this._segmentInstance == null) {
+			Logger.debug("Cannot track, user has opted out or no segment instance");
 			return;
 		}
 
@@ -142,6 +173,11 @@ export class TelemetryService {
 			payload["distinct_id"] = this._distinctId;
 		}
 
+		Logger.debug(
+			`Tracking userId=${this._distinctId} anonymousId=${this._anonymousId}:`,
+			event,
+			payload
+		);
 		try {
 			this._segmentInstance.track({
 				userId: this._distinctId,

@@ -3,7 +3,11 @@ package com.codestream.extensions
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.vcs.vfs.AbstractVcsVirtualFile
+import com.intellij.openapi.vcs.vfs.ContentRevisionVirtualFile
+import com.intellij.openapi.vcs.vfs.VcsVirtualFile
 import com.intellij.openapi.vfs.VirtualFile
+import git4idea.GitRevisionNumber
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.TextDocumentIdentifier
 
@@ -17,8 +21,18 @@ fun Document.lspPosition(offset: Int): Position {
 
 val Document.uri: String?
     get() {
-        val file = FileDocumentManager.getInstance().getFile(this)
-        return file?.uri
+        val contentRevisionFile = this.file as? ContentRevisionVirtualFile
+        return if (contentRevisionFile != null) {
+            contentRevisionFile.uri
+        } else {
+            val file = FileDocumentManager.getInstance().getFile(this)
+            file?.uri
+        }
+    }
+
+val Document.gitSha : String?
+    get() {
+        return (this.file as? VcsVirtualFile)?.fileRevision?.revisionNumber?.toString()
     }
 
 val Document.textDocumentIdentifier: TextDocumentIdentifier?

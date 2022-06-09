@@ -1,16 +1,15 @@
 "use strict";
+import { GraphQLClient } from "graphql-request";
 import { Agent as HttpsAgent } from "https";
 import HttpsProxyAgent from "https-proxy-agent";
 import fetch, { RequestInit, Response } from "node-fetch";
-import { URI } from "vscode-uri";
+import * as url from "url";
 import { InternalError, ReportSuppressedMessages } from "../agentError";
 import { MessageType } from "../api/apiProvider";
-import { MarkerLocation, User } from "../api/extensions";
+import { User } from "../api/extensions";
 import { Container, SessionContainer } from "../container";
 import { GitRemote, GitRemoteLike, GitRepository } from "../git/gitService";
 import { Logger } from "../logger";
-import { Markerish, MarkerLocationManager } from "../managers/markerLocationManager";
-import { findBestMatchingLine, MAX_RANGE_VALUE } from "../markerLocation/calculator";
 import {
 	AddEnterpriseProviderRequest,
 	AddEnterpriseProviderResponse,
@@ -20,6 +19,7 @@ import {
 	CreateThirdPartyPostResponse,
 	DocumentMarker,
 	DocumentMarkerExternalContent,
+	FetchAssignableUsersAutocompleteRequest,
 	FetchAssignableUsersRequest,
 	FetchAssignableUsersResponse,
 	FetchThirdPartyBoardsRequest,
@@ -38,17 +38,16 @@ import {
 	GetMyPullRequestsResponse,
 	MoveThirdPartyCardRequest,
 	MoveThirdPartyCardResponse,
+	ProviderConfigurationData,
 	RemoveEnterpriseProviderRequest,
 	ThirdPartyDisconnect,
 	ThirdPartyProviderConfig,
 	UpdateThirdPartyStatusRequest,
 	UpdateThirdPartyStatusResponse
 } from "../protocol/agent.protocol";
-import { CodemarkType, CSMe, CSProviderInfos, CSReferenceLocation } from "../protocol/api.protocol";
+import { CSMe, CSProviderInfos } from "../protocol/api.protocol";
 import { CodeStreamSession } from "../session";
-import { Functions, Strings } from "../system";
-import * as url from "url";
-import { GraphQLClient } from "graphql-request";
+import { Functions, log, Strings } from "../system";
 
 export const providerDisplayNamesByNameKey = new Map<string, string>([
 	["asana", "Asana"],
@@ -66,8 +65,9 @@ export const providerDisplayNamesByNameKey = new Map<string, string>([
 	["slack", "Slack"],
 	["msteams", "Microsoft Teams"],
 	["okta", "Okta"],
-	["clubhouse", "Clubhouse"],
-	["linear", "Linear"]
+	["shortcut", "Shortcut"],
+	["linear", "Linear"],
+	["newrelic", "New Relic"]
 ]);
 
 export interface ThirdPartyProviderSupportsIssues {
@@ -78,6 +78,9 @@ export interface ThirdPartyProviderSupportsIssues {
 	): Promise<FetchThirdPartyCardWorkflowResponse>;
 	moveCard(request: MoveThirdPartyCardRequest): Promise<MoveThirdPartyCardResponse>;
 	getAssignableUsers(request: FetchAssignableUsersRequest): Promise<FetchAssignableUsersResponse>;
+	getAssignableUsersAutocomplete(
+		request: FetchAssignableUsersAutocompleteRequest
+	): Promise<FetchAssignableUsersResponse>;
 	createCard(request: CreateThirdPartyCardRequest): Promise<CreateThirdPartyCardResponse>;
 }
 
@@ -91,24 +94,23 @@ export interface ThirdPartyProviderSupportsStatus {
 }
 
 export interface ThirdPartyProviderSupportsPullRequests {
-	getPullRequestDocumentMarkers(request: {
-		uri: URI;
-		repoId: string | undefined;
-		streamId: string | undefined;
-	}): Promise<DocumentMarker[]>;
-
-	// TODO fix these types
-	createPullRequest(
-		request: ProviderCreatePullRequestRequest
-	): Promise<ProviderCreatePullRequestResponse | undefined>;
 	getRepoInfo(request: ProviderGetRepoInfoRequest): Promise<ProviderGetRepoInfoResponse>;
 	getIsMatchingRemotePredicate(): (remoteLike: GitRemoteLike) => boolean;
 	getRemotePaths(repo: GitRepository, _projectsByRemotePath: any): any;
+}
 
+export interface ThirdPartyProviderSupportsCreatingPullRequests
+	extends ThirdPartyProviderSupportsPullRequests {
+	createPullRequest(
+		request: ProviderCreatePullRequestRequest
+	): Promise<ProviderCreatePullRequestResponse | undefined>;
+}
+
+export interface ThirdPartyProviderSupportsViewingPullRequests
+	extends ThirdPartyProviderSupportsPullRequests {
 	getPullRequest(
 		request: FetchThirdPartyPullRequestRequest
 	): Promise<FetchThirdPartyPullRequestResponse>;
-
 	getPullRequestCommits(
 		request: FetchThirdPartyPullRequestCommitsRequest
 	): Promise<FetchThirdPartyPullRequestCommitsResponse>;
@@ -127,13 +129,17 @@ export namespace ThirdPartyIssueProvider {
 			(provider as any).createCard !== undefined
 		);
 	}
-	export function supportsPullRequests(
+
+	export function supportsViewingPullRequests(
 		provider: ThirdPartyProvider
 	): provider is ThirdPartyProvider & ThirdPartyProviderSupportsPullRequests {
-		return (
-			(provider as any).getPullRequestDocumentMarkers !== undefined ||
-			(provider as any).getMyPullRequests !== undefined
-		);
+		return (provider as any).getMyPullRequests !== undefined;
+	}
+
+	export function supportsCreatingPullRequests(
+		provider: ThirdPartyProvider
+	): provider is ThirdPartyProvider & ThirdPartyProviderSupportsPullRequests {
+		return (provider as any).createPullRequest !== undefined;
 	}
 }
 
@@ -156,13 +162,15 @@ export interface ThirdPartyProvider {
 	readonly icon: string;
 	hasTokenError?: boolean;
 	connect(): Promise<void>;
-	configure(data: { [key: string]: any }): Promise<void>;
+	canConfigure(): boolean;
+	configure(data: ProviderConfigurationData, verify?: boolean): Promise<boolean>;
 	disconnect(request: ThirdPartyDisconnect): Promise<void>;
 	addEnterpriseHost(request: AddEnterpriseProviderRequest): Promise<AddEnterpriseProviderResponse>;
 	removeEnterpriseHost(request: RemoveEnterpriseProviderRequest): Promise<void>;
 	getConfig(): ThirdPartyProviderConfig;
 	isConnected(me: CSMe): boolean;
 	ensureConnected(request?: { providerTeamId?: string }): Promise<void>;
+	verifyConnection(config: ProviderConfigurationData): Promise<void>;
 
 	/**
 	 * Do any kind of pre-fetching work, like getting an API version number
@@ -175,7 +183,10 @@ export interface ThirdPartyProvider {
 
 export interface ThirdPartyIssueProvider extends ThirdPartyProvider {
 	supportsIssues(): this is ThirdPartyIssueProvider & ThirdPartyProviderSupportsIssues;
-	supportsPullRequests(): this is ThirdPartyIssueProvider & ThirdPartyProviderSupportsPullRequests;
+	supportsViewingPullRequests(): this is ThirdPartyIssueProvider &
+		ThirdPartyProviderSupportsViewingPullRequests;
+	supportsCreatingPullRequests(): this is ThirdPartyIssueProvider &
+		ThirdPartyProviderSupportsCreatingPullRequests;
 }
 
 export interface ThirdPartyPostProvider extends ThirdPartyProvider {
@@ -327,6 +338,7 @@ export abstract class ThirdPartyProviderBase<
 				if (me == null) return;
 
 				const providerInfo = this.getProviderInfo(me);
+				if (!providerInfo) return;
 				if (!this.hasAccessToken(providerInfo)) return;
 				resolve(providerInfo);
 			});
@@ -334,14 +346,13 @@ export abstract class ThirdPartyProviderBase<
 
 		this._readyPromise = this.onConnected(this._providerInfo);
 		await this._readyPromise;
-		this.resetReady();
 	}
 
 	protected async onConnected(providerInfo?: TProviderInfo) {
 		// if CodeStream is connected through a proxy, then we should be too,
 		// but to make sure nothing breaks, only if the user has a preference for it
 		if (this.session.proxyAgent) {
-			const { user } = await SessionContainer.instance().users.getMe();
+			const user = await SessionContainer.instance().users.getMe();
 			if (user.preferences?.useCodestreamProxyForIntegrations) {
 				Logger.log(
 					`${this.providerConfig.name} provider (id:"${this.providerConfig.id}") will use CodeStream's proxy agent`
@@ -373,32 +384,77 @@ export abstract class ThirdPartyProviderBase<
 		}
 	}
 
-	async configure(data: { [key: string]: any }) {}
+	// override to allow configuration without OAuth
+	canConfigure() {
+		return false;
+	}
+
+	@log()
+	async configure(config: ProviderConfigurationData, verify?: boolean): Promise<boolean> {
+		if (verify) {
+			config.pendingVerification = true;
+		}
+		await this.session.api.setThirdPartyProviderInfo({
+			providerId: this.providerConfig.id,
+			data: config
+		});
+		let result = true;
+		if (verify) {
+			result = await this.verifyAndUpdate(config);
+		}
+		this.session.updateProviders();
+		return result;
+	}
+
+	async verifyAndUpdate(config: ProviderConfigurationData): Promise<boolean> {
+		let tokenError;
+		try {
+			await this.verifyConnection(config);
+		} catch (ex) {
+			tokenError = {
+				error: ex,
+				occurredAt: Date.now(),
+				isConnectionError: true,
+				providerMessage: (ex as Error).message
+			};
+			delete config.accessToken;
+		}
+		config.tokenError = tokenError;
+		config.pendingVerification = false;
+		this.session.api.setThirdPartyProviderInfo({
+			providerId: this.providerConfig.id,
+			data: config
+		});
+		return !tokenError;
+	}
 
 	protected async onConfigured() {}
+
+	async verifyConnection(config: ProviderConfigurationData) {}
 
 	async disconnect(request?: ThirdPartyDisconnect) {
 		void (await this.session.api.disconnectThirdPartyProvider({
 			providerId: this.providerConfig.id,
 			providerTeamId: request && request.providerTeamId
 		}));
-		this._readyPromise = this._providerInfo = undefined;
+		this._readyPromise = this._providerInfo = this._ensuringConnection = undefined;
 		await this.onDisconnected(request);
 	}
 
 	protected async onDisconnected(request?: ThirdPartyDisconnect) {}
 
 	async ensureConnected(request?: { providerTeamId?: string }) {
-		if (this._readyPromise !== undefined) return this._readyPromise;
+		if (this._readyPromise !== undefined) {
+			await this._readyPromise;
+		}
 
 		if (this._providerInfo !== undefined) {
 			await this.refreshToken(request);
-			return;
 		}
 		if (this._ensuringConnection === undefined) {
 			this._ensuringConnection = this.ensureConnectedCore(request);
 		}
-		void (await this._ensuringConnection);
+		await this._ensuringConnection;
 	}
 
 	async refreshToken(request?: { providerTeamId?: string }) {
@@ -423,16 +479,15 @@ export abstract class ThirdPartyProviderBase<
 	}
 
 	private async ensureConnectedCore(request?: { providerTeamId?: string }) {
-		const { user } = await SessionContainer.instance().users.getMe();
+		const user = await SessionContainer.instance().users.getMe();
 		this._providerInfo = this.getProviderInfo(user);
 		if (this._providerInfo === undefined) {
 			throw new Error(`You must authenticate with ${this.displayName} first.`);
 		}
 
 		await this.refreshToken(request);
-		await this.onConnected(this._providerInfo);
-
-		this._ensuringConnection = undefined;
+		this._readyPromise = this.onConnected(this._providerInfo);
+		await this._readyPromise;
 	}
 
 	protected async delete<R extends object>(
@@ -458,9 +513,12 @@ export abstract class ThirdPartyProviderBase<
 	protected async get<R extends object>(
 		url: string,
 		headers: { [key: string]: string } = {},
-		options: { [key: string]: any } = {}
+		options: { [key: string]: any } = {},
+		ensureConnected = true
 	): Promise<ApiResponse<R>> {
-		await this.ensureConnected();
+		if (ensureConnected) {
+			await this.ensureConnected();
+		}
 		return this.fetch<R>(
 			url,
 			{
@@ -540,6 +598,9 @@ export abstract class ThirdPartyProviderBase<
 
 			method = (init && init.method) || "GET";
 			absoluteUrl = options.absoluteUrl ? url : `${this.baseUrl}${url}`;
+			if (options.timeout != null) {
+				init.timeout = options.timeout;
+			}
 
 			let json: Promise<R> | undefined;
 			let resp: Response | undefined;
@@ -552,7 +613,17 @@ export abstract class ThirdPartyProviderBase<
 					if (options?.useRawResponse) {
 						json = resp.text() as any;
 					} else {
-						json = resp.json() as Promise<R>;
+						try {
+							json = resp.json() as Promise<R>;
+						} catch (jsonError) {
+							Container.instance().errorReporter.reportBreadcrumb({
+								message: `provider fetchCore parseJsonError`,
+								data: {
+									jsonError,
+									text: resp.text() as any
+								}
+							});
+						}
 					}
 				}
 			}
@@ -560,6 +631,12 @@ export abstract class ThirdPartyProviderBase<
 			if (resp !== undefined && !resp.ok) {
 				traceResult = `${this.displayName}: FAILED(${retryCount}x) ${method} ${absoluteUrl}`;
 				const error = await this.handleErrorResponse(resp);
+				Container.instance().errorReporter.reportBreadcrumb({
+					message: `provider fetchCore response`,
+					data: {
+						error
+					}
+				});
 				throw error;
 			}
 
@@ -677,8 +754,13 @@ export abstract class ThirdPartyIssueProviderBase<
 	supportsIssues(): this is ThirdPartyIssueProvider & ThirdPartyProviderSupportsIssues {
 		return ThirdPartyIssueProvider.supportsIssues(this);
 	}
-	supportsPullRequests(): this is ThirdPartyIssueProvider & ThirdPartyProviderSupportsPullRequests {
-		return ThirdPartyIssueProvider.supportsPullRequests(this);
+	supportsViewingPullRequests(): this is ThirdPartyIssueProvider &
+		ThirdPartyProviderSupportsViewingPullRequests {
+		return ThirdPartyIssueProvider.supportsViewingPullRequests(this);
+	}
+	supportsCreatingPullRequests(): this is ThirdPartyIssueProvider &
+		ThirdPartyProviderSupportsCreatingPullRequests {
+		return ThirdPartyIssueProvider.supportsCreatingPullRequests(this);
 	}
 	protected createDescription(request: ProviderCreatePullRequestRequest): string | undefined {
 		if (
@@ -746,199 +828,10 @@ export abstract class ThirdPartyIssueProviderBase<
 		return true;
 	}
 
-	protected async getCommentsForPath(
-		filePath: string,
-		repo: GitRepository
-	): Promise<PullRequestComment[] | undefined> {
-		return undefined;
-	}
-
 	protected getPRExternalContent(
 		comment: PullRequestComment
 	): DocumentMarkerExternalContent | undefined {
 		return undefined;
-	}
-
-	protected getPullRequestDocumentMarkersCore(params: {
-		uri: URI;
-		repoId: string | undefined;
-		streamId: string;
-	}): Promise<DocumentMarker[]> {
-		const { documents } = Container.instance();
-		const uriAsString = params.uri.toString(true);
-		const doc = documents.get(uriAsString);
-		const cached = this._pullRequestDocumentMarkersCache.get(uriAsString);
-
-		if (cached && doc && cached.documentVersion === doc.version) {
-			Logger.log(
-				`${this.displayName}.getPullRequestDocumentMarkers: returning cached document markers for ${uriAsString} v${doc.version}`
-			);
-			return cached.promise;
-		}
-
-		Logger.log(
-			`${this.displayName}.getPullRequestDocumentMarkers: calculating document markers for ${uriAsString} v${doc?.version}`
-		);
-		const promise = this._getPullRequestDocumentMarkersCore(params);
-		if (doc?.version !== undefined) {
-			this._pullRequestDocumentMarkersCache.set(uriAsString, {
-				documentVersion: doc.version,
-				promise
-			});
-		}
-		return promise;
-	}
-
-	protected async _getPullRequestDocumentMarkersCore({
-		uri,
-		repoId,
-		streamId
-	}: {
-		uri: URI;
-		repoId: string | undefined;
-		streamId: string;
-	}): Promise<DocumentMarker[]> {
-		void (await this.ensureConnected());
-
-		const documentMarkers: DocumentMarker[] = [];
-
-		if (!(await this.isPRApiCompatible())) return documentMarkers;
-
-		const { git, session } = SessionContainer.instance();
-
-		const repo = await git.getRepositoryByFilePath(uri.fsPath);
-		if (repo === undefined) return documentMarkers;
-
-		const comments = await this.getCommentsForPath(uri.fsPath, repo);
-		if (comments === undefined) return documentMarkers;
-
-		const commentsById: { [id: string]: PullRequestComment } = Object.create(null);
-		const markersByCommit = new Map<string, Markerish[]>();
-		const trackingBranch = await git.getTrackingBranch(uri);
-
-		for (const c of comments) {
-			Logger.log(`${this.displayName}.getPullRequestDocumentMarkers: processing comment ${c.id}`);
-
-			if (
-				c.pullRequest.isOpen &&
-				c.pullRequest.targetBranch !== trackingBranch?.shortName &&
-				c.pullRequest.sourceBranch !== trackingBranch?.shortName
-			) {
-				continue;
-			}
-
-			let rev;
-			let line;
-			if (c.line !== -1 && (await git.isValidReference(repo.path, c.commit))) {
-				rev = c.commit;
-				line = c.line;
-			} else if (
-				c.originalLine !== -1 &&
-				c.originalCommit &&
-				(await git.isValidReference(repo.path, c.originalCommit))
-			) {
-				rev = c.originalCommit!;
-				line = c.originalLine;
-			}
-
-			if (rev == undefined || line === undefined || line === -1) {
-				Logger.log(
-					`${this.displayName}.getPullRequestDocumentMarkers: could not get position information comment ${c.id} from PR`
-				);
-				Logger.log(
-					`${this.displayName}.getPullRequestDocumentMarkers: attempting to determine current revision for content-based calculation`
-				);
-				rev = await git.getFileCurrentRevision(uri);
-				if (!rev) {
-					Logger.log(
-						`${this.displayName}.getPullRequestDocumentMarkers: could not determine current revision for file ${uri.fsPath}`
-					);
-					continue;
-				}
-
-				Logger.log(
-					`${this.displayName}.getPullRequestDocumentMarkers: attempting to determine current revision for content-based calculation`
-				);
-				const contents = await git.getFileContentForRevision(uri, rev);
-				if (!contents) {
-					Logger.log(
-						`${this.displayName}.getPullRequestDocumentMarkers: could not read contents of ${uri.fsPath}@${rev} from git`
-					);
-					continue;
-				}
-
-				Logger.log(
-					`${this.displayName}.getPullRequestDocumentMarkers: calculating comment line via content analysis`
-				);
-				line = await findBestMatchingLine(contents, c.code, c.line);
-			}
-
-			Logger.log(
-				`${this.displayName}.getPullRequestDocumentMarkers: comment ${c.id} located at line ${line}, commit ${rev}`
-			);
-
-			let markers = markersByCommit.get(rev);
-			if (markers === undefined) {
-				markers = [];
-				markersByCommit.set(rev, markers);
-			}
-
-			commentsById[c.id] = c;
-			if (line !== -1) {
-				const referenceLocation: CSReferenceLocation = {
-					commitHash: rev,
-					location: [line, 1, line, MAX_RANGE_VALUE, undefined],
-					flags: {
-						canonical: true
-					}
-				};
-				markers.push({
-					id: c.id,
-					referenceLocations: [referenceLocation]
-				});
-			} else {
-				Logger.log(
-					`${this.displayName}.getPullRequestDocumentMarkers: could not find current location for comment ${c.url}`
-				);
-			}
-		}
-
-		const locations = await MarkerLocationManager.computeCurrentLocations(uri, markersByCommit);
-
-		const teamId = session.teamId;
-
-		for (const [id, location] of Object.entries(locations.locations)) {
-			const comment = commentsById[id];
-
-			documentMarkers.push({
-				id: id,
-				codemarkId: undefined,
-				fileUri: uri.toString(),
-				fileStreamId: streamId,
-				// postId: undefined!,
-				// postStreamId: undefined!,
-				repoId: repoId!,
-				teamId: teamId,
-				file: uri.fsPath,
-				// commitHashWhenCreated: revision!,
-				// locationWhenCreated: MarkerLocation.toArray(location),
-				modifiedAt: new Date(comment.createdAt).getTime(),
-				code: "",
-
-				createdAt: new Date(comment.createdAt).getTime(),
-				creatorId: comment.author.id,
-				creatorName: comment.author.nickname,
-				externalContent: this.getPRExternalContent(comment)!,
-				range: MarkerLocation.toRange(location),
-				location: location,
-				title: comment.pullRequest.title,
-				summary: comment.text,
-				summaryMarkdown: `\n\n${Strings.escapeMarkdown(comment.text)}`,
-				type: CodemarkType.PRComment
-			});
-		}
-
-		return documentMarkers;
 	}
 
 	protected _isSuppressedException(ex: any): ReportSuppressedMessages | undefined {
@@ -982,7 +875,10 @@ export abstract class ThirdPartyIssueProviderBase<
 		}
 	}
 
-	protected trySetThirdPartyProviderInfo(ex: Error, exType?: ReportSuppressedMessages | undefined) {
+	protected trySetThirdPartyProviderInfo(
+		ex: Error,
+		exType?: ReportSuppressedMessages | undefined
+	): void {
 		if (!ex) return;
 
 		exType = exType || this._isSuppressedException(ex);
@@ -1007,7 +903,7 @@ export abstract class ThirdPartyIssueProviderBase<
 		}
 	}
 
-	protected getOwnerFromRemote(remote: string): { owner: string; name: string } {
+	getOwnerFromRemote(remote: string): { owner: string; name: string } {
 		return {
 			owner: "",
 			name: ""
@@ -1045,6 +941,46 @@ export abstract class ThirdPartyIssueProviderBase<
 	protected async getVersion(): Promise<ProviderVersion> {
 		this._version = this.DEFAULT_VERSION;
 		return this._version;
+	}
+
+	protected handleProviderError(ex: any, request: any) {
+		Logger.error(ex, `${this.displayName}: handleProviderError`, {
+			request
+		});
+
+		let errorMessage = undefined;
+		if (ex?.info?.error?.message) {
+			// this is some kind of fetch / network error
+			errorMessage = ex.info.error.message;
+		}
+		if (ex?.response?.errors?.length) {
+			// this is some kind of provider error
+			errorMessage = ex.response.errors[0].message || "Unknown error";
+		}
+		if (!errorMessage) {
+			if (ex?.message) {
+				// generic error
+				errorMessage = ex.message;
+			} else {
+				// some other kind of error
+				errorMessage = ex?.toString();
+			}
+		}
+
+		errorMessage = `${this.displayName}: ${errorMessage || `Unknown error`}`;
+		return {
+			error: {
+				type: "PROVIDER",
+				message: errorMessage
+			}
+		};
+	}
+
+	@log()
+	async getAssignableUsersAutocomplete(
+		request: FetchAssignableUsersAutocompleteRequest
+	): Promise<FetchAssignableUsersResponse> {
+		throw new Error("ERR_METHOD_NOT_IMPLEMENTED");
 	}
 }
 
@@ -1093,6 +1029,11 @@ export interface ProviderVersion {
 	 * true if the version is 0.0.0
 	 */
 	isDefault?: boolean;
+
+	/**
+	 * true if we're not able to get a version from the api
+	 */
+	isLowestSupportedVersion?: boolean;
 }
 
 export interface PullRequestComment {
@@ -1192,47 +1133,82 @@ export async function getRemotePaths<R extends { path: string }>(
 export interface ProviderGetRepoInfoRequest {
 	providerId: string;
 	remote: string;
-	// TODO
-	// remoteIdentifier: {
-	// 	owner: string;
-	// 	name: string;
-	// };
 }
 
 export interface ProviderPullRequestInfo {
 	id: string;
 	url: string;
+	nameWithOwner?: string;
 	baseRefName: string;
 	headRefName: string;
 }
 
 export interface ProviderGetRepoInfoResponse {
+	/**
+	 * id of the repository from the provider
+	 */
 	id?: string;
+	/**
+	 * in github.com/TeamCodeStream/codestream this is TeamCodeStream/codestream
+	 */
+	nameWithOwner?: string;
+	/**
+	 * in github.com/TeamCodeStream/codestream this is TeamCodeStream
+	 */
+	owner?: string;
+	/**
+	 * in github.com/TeamCodeStream/codestream this is codestream
+	 */
+	name?: string;
+	/**
+	 * is this repo forked
+	 */
+	isFork?: boolean;
+	/**
+	 * defaultBranch: main, master, something else
+	 */
 	defaultBranch?: string;
+	/**
+	 * currently open pull requests
+	 */
 	pullRequests?: ProviderPullRequestInfo[];
-	error?: { message?: string; type: string };
-}
 
-export interface ProviderGetForkedReposResponse {
-	parent?: any;
-	forks?: any[];
 	error?: { message?: string; type: string };
+	// used for some providers
+	key?: string;
 }
 
 export interface ProviderCreatePullRequestRequest {
+	/** CodeStream providerId, aka github*com, gitlab*com, etc. */
 	providerId: string;
-	providerRepositoryId?: string /* for use across forks */;
-	remote: string /* to look up the repo ID on the provider */;
+	/** certain providers require their internal repo Id */
+	providerRepositoryId?: string;
+	/** is the repo a fork? */
+	isFork?: boolean;
+	/** to look up the repo ID on the provider  */
+	remote: string;
+	/** PR title */
 	title: string;
+	/** PR description (optional) */
 	description?: string;
+	/** base branch name, or the branch that will accept the PR */
 	baseRefName: string;
+	/** in github.com/TeamCodeStream/codestream this is TeamCodeStream/codestream */
+	baseRefRepoNameWithOwner?: string;
+	/** head branch name, or the branch you have been working on and want to merge somewhere */
 	headRefName: string;
+	/** in github.com/TeamCodeStream/codestream this is TeamCodeStream, some providers, like GitHub need this for forks */
+	headRefRepoOwner?: string;
+	/** in github.com/TeamCodeStream/codestream this is TeamCodeStream/codestream */
+	headRefRepoNameWithOwner?: string;
+	/** additional data */
 	metadata: {
 		reviewPermalink?: string;
 		reviewers?: { name: string }[];
 		approvedAt?: number;
 		addresses?: { title: string; url: string }[];
 	};
+	/**  name of the user's IDE */
 	ideName?: string;
 }
 
@@ -1243,12 +1219,10 @@ export interface ProviderCreatePullRequestResponse {
 	error?: { message?: string; type: string };
 }
 
-// export interface ProviderGetPullRequestRequest {
-// 	pullRequestId: string;
-// 	providerId: string;
-// }
-
-// export interface ProviderGetPullRequestResponse {
-// 	pullRequestId: string;
-// 	providerId: string;
-// }
+export interface RepoPullRequestProvider {
+	repo: GitRepository;
+	providerId: string;
+	providerName: string;
+	provider: ThirdPartyProvider & ThirdPartyProviderSupportsPullRequests;
+	remotes: GitRemote[];
+}

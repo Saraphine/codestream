@@ -8,7 +8,10 @@ import {
 	OtcLoginRequestType,
 	TokenLoginRequest,
 	ProviderTokenRequest,
-	ProviderTokenRequestType
+	ProviderTokenRequestType,
+	GenerateLoginCodeRequestType,
+	ConfirmLoginCodeRequest,
+	ConfirmLoginCodeRequestType
 } from "@codestream/protocols/agent";
 import { CodeStreamState } from "../store";
 import { HostApi } from "../webview-api";
@@ -22,7 +25,13 @@ import {
 	goToLogin,
 	goToSetPassword,
 	setCurrentCodemark,
-	setCurrentReview
+	setCurrentReview,
+	goToCompanyCreation,
+	setCurrentCodeError,
+	handlePendingProtocolHandlerUrl,
+	clearPendingProtocolHandlerUrl,
+	goToEmailConfirmation,
+	clearForceRegion
 } from "../store/context/actions";
 import { fetchCodemarks } from "../Stream/actions";
 import { getCodemark } from "../store/codemarks/reducer";
@@ -40,6 +49,7 @@ import { emptyObject, uuid } from "../utils";
 import { localStore } from "../utilities/storage";
 import { setSession, setMaintenanceMode } from "../store/session/actions";
 import { moveCursorToLine } from "../Stream/api-functions";
+import { updateConfigs } from "../store/configs/actions";
 
 export enum SignupType {
 	JoinTeam = "joinTeam",
@@ -60,8 +70,11 @@ export interface SSOAuthInfo {
 	};
 }
 
-const ProviderNames = {
-	github: "GitHub"
+export const ProviderNames = {
+	github: "GitHub",
+	gitlab: "GitLab",
+	bitbucket: "Bitbucket",
+	newrelic: "New Relic"
 };
 
 export const startSSOSignin = (
@@ -150,18 +163,27 @@ export const startIDESignin = (provider: SupportedSSOProvider, info?: SSOAuthInf
 
 export type PasswordLoginParams = Pick<PasswordLoginRequest, "email" | "password">;
 
-export const authenticate = (params: PasswordLoginParams | TokenLoginRequest) => async (
-	dispatch,
-	getState: () => CodeStreamState
-) => {
+export const authenticate = (
+	params: PasswordLoginParams | TokenLoginRequest | ConfirmLoginCodeRequest
+) => async (dispatch, getState: () => CodeStreamState) => {
 	const api = HostApi.instance;
-	const response = await api.send(
-		(params as any).password ? PasswordLoginRequestType : TokenLoginRequestType,
-		{
-			...params,
+	let response;
+	if ((params as any).password) {
+		response = await api.send(PasswordLoginRequestType, {
+			...(params as PasswordLoginParams),
 			team: getState().configs.team
-		}
-	);
+		});
+	} else if ((params as any).code) {
+		response = await api.send(ConfirmLoginCodeRequestType, {
+			...(params as ConfirmLoginCodeRequest),
+			team: getState().configs.team
+		});
+	} else {
+		response = await api.send(TokenLoginRequestType, {
+			...(params as TokenLoginRequest),
+			team: getState().configs.team
+		});
+	}
 
 	if (isLoginFailResponse(response)) {
 		if (getState().session.inMaintenanceMode && response.error !== LoginResult.MaintenanceMode) {
@@ -173,6 +195,19 @@ export const authenticate = (params: PasswordLoginParams | TokenLoginRequest) =>
 				return dispatch(setMaintenanceMode(true, params));
 			case LoginResult.MustSetPassword:
 				return dispatch(goToSetPassword({ email: (params as PasswordLoginParams).email }));
+			case LoginResult.NotInCompany:
+				return dispatch(
+					goToCompanyCreation({
+						loggedIn: true,
+						// since we're sure the error is NotInCompany, params below must be email/password because token
+						// login is for resuming previous sessions and this error means you haven't ever fully signed into the extension
+						email: (params as PasswordLoginParams).email,
+						token: response.extra.token,
+						userId: response.extra.userId,
+						eligibleJoinCompanies: response.extra.eligibleJoinCompanies,
+						accountIsConnected: response.extra.accountIsConnected
+					})
+				);
 			case LoginResult.NotOnTeam:
 				return dispatch(
 					goToTeamCreation({
@@ -193,10 +228,34 @@ export const authenticate = (params: PasswordLoginParams | TokenLoginRequest) =>
 	return dispatch(onLogin(response));
 };
 
-export const onLogin = (response: LoginSuccessResponse, isFirstPageview?: boolean) => async (
+export const generateLoginCode = (email: string) => async (
 	dispatch,
 	getState: () => CodeStreamState
 ) => {
+	const api = HostApi.instance;
+	const response = await api.send(GenerateLoginCodeRequestType, { email });
+	if (response.status === LoginResult.Success) {
+		dispatch(
+			goToEmailConfirmation({
+				confirmationType: "login",
+				email: email,
+				registrationParams: {
+					email: email,
+					username: "",
+					password: ""
+				}
+			})
+		);
+	} else {
+		throw response.status;
+	}
+};
+
+export const onLogin = (
+	response: LoginSuccessResponse,
+	isFirstPageview?: boolean,
+	teamCreated?: boolean
+) => async (dispatch, getState: () => CodeStreamState) => {
 	const api = HostApi.instance;
 
 	const [bootstrapData, { editorContext }, bootstrapCore] = await Promise.all([
@@ -234,6 +293,15 @@ export const onLogin = (response: LoginSuccessResponse, isFirstPageview?: boolea
 		}
 	} else if (response.state.reviewId) {
 		dispatch(setCurrentReview(response.state.reviewId));
+	} else if (response.state.codeErrorId) {
+		dispatch(setCurrentCodeError(response.state.codeErrorId));
+	}
+
+	const { context } = getState();
+	if (context.pendingProtocolHandlerUrl && !teamCreated) {
+		await dispatch(handlePendingProtocolHandlerUrl(context.pendingProtocolHandlerUrl));
+		dispatch(clearPendingProtocolHandlerUrl());
+		dispatch(clearForceRegion());
 	}
 };
 
@@ -241,19 +309,28 @@ export const completeSignup = (
 	email: string,
 	token: string,
 	teamId: string,
-	extra: { createdTeam: boolean; provider?: string }
+	extra: {
+		createdTeam: boolean;
+		provider?: string;
+		byDomain?: boolean;
+		setEnvironment?: { environment: string; serverUrl: string };
+	}
 ) => async (dispatch, getState: () => CodeStreamState) => {
+	const tokenUrl =
+		(extra.setEnvironment && extra.setEnvironment.serverUrl) || getState().configs.serverUrl;
 	const response = await HostApi.instance.send(TokenLoginRequestType, {
 		token: {
 			value: token,
 			email,
-			url: getState().configs.serverUrl
+			url: tokenUrl
 		},
-		teamId
+		teamId,
+		setEnvironment: extra.setEnvironment
 	});
 
 	if (isLoginFailResponse(response)) {
 		logError("There was an error completing signup", response);
+		dispatch(goToLogin());
 		throw response.error;
 	}
 
@@ -261,25 +338,28 @@ export const completeSignup = (
 		? ProviderNames[extra.provider.toLowerCase()] || extra.provider
 		: "CodeStream";
 	HostApi.instance.track("Signup Completed", {
-		"Signup Type": extra.createdTeam ? "Organic" : "Viral",
+		"Signup Type": extra.byDomain ? "Domain" : extra.createdTeam ? "Organic" : "Viral",
 		"Auth Provider": providerName
 	});
-	dispatch(onLogin(response, true));
+	dispatch(onLogin(response, true, extra.createdTeam));
 };
 
 export const validateSignup = (provider: string, authInfo?: SSOAuthInfo) => async (
 	dispatch,
 	getState: () => CodeStreamState
 ) => {
+	const { context, session } = getState();
 	const response = await HostApi.instance.send(OtcLoginRequestType, {
-		code: getState().session.otc!
+		code: session.otc!,
+		errorGroupGuid: context.pendingProtocolHandlerQuery?.errorGroupGuid
 	});
 
+	const providerName = provider ? ProviderNames[provider.toLowerCase()] || provider : "CodeStream";
+
 	if (isLoginFailResponse(response)) {
-		if (getState().session.inMaintenanceMode && response.error !== LoginResult.MaintenanceMode) {
+		if (session.inMaintenanceMode && response.error !== LoginResult.MaintenanceMode) {
 			dispatch(setMaintenanceMode(false));
 		}
-
 		switch (response.error) {
 			case LoginResult.MaintenanceMode:
 				return dispatch(setMaintenanceMode(true));
@@ -291,8 +371,29 @@ export const validateSignup = (provider: string, authInfo?: SSOAuthInfo) => asyn
 				return dispatch(goToLogin());
 			case LoginResult.AlreadySignedIn:
 				return dispatch(bootstrap());
+			case LoginResult.NotInCompany:
+				HostApi.instance.track("Account Created", {
+					email: response.extra.email,
+					"Auth Provider": providerName,
+					Source: context.pendingProtocolHandlerQuery?.src
+				});
+				return dispatch(
+					goToCompanyCreation({
+						email: response.extra && response.extra.email,
+						token: response.extra && response.extra.token,
+						userId: response.extra && response.extra.userId,
+						eligibleJoinCompanies: response.extra && response.extra.eligibleJoinCompanies,
+						accountIsConnected: response.extra && response.extra.accountIsConnected,
+						isWebmail: response.extra.isWebmail,
+						provider
+					})
+				);
 			case LoginResult.NotOnTeam:
-				HostApi.instance.track("Account Created", { email: response.extra.email });
+				HostApi.instance.track("Account Created", {
+					email: response.extra.email,
+					"Auth Provider": providerName,
+					Source: context.pendingProtocolHandlerQuery?.src
+				});
 				return dispatch(
 					goToTeamCreation({
 						email: response.extra && response.extra.email,
@@ -311,14 +412,14 @@ export const validateSignup = (provider: string, authInfo?: SSOAuthInfo) => asyn
 
 	if (authInfo && authInfo.fromSignup) {
 		HostApi.instance.track("Account Created", {
-			email: response.loginResponse.user.email
+			email: response.loginResponse.user.email,
+			"Auth Provider": providerName,
+			Source: context.pendingProtocolHandlerQuery?.src
 		});
 
-		const providerName = provider
-			? ProviderNames[provider.toLowerCase()] || provider
-			: "CodeStream";
 		HostApi.instance.track("Signup Completed", {
-			"Signup Type": authInfo.type === SignupType.CreateTeam ? "Organic" : "Viral",
+			// i don't think there's any way of reaching here unless user is already on a company/team by invite
+			"Signup Type": "Viral", // authInfo.type === SignupType.CreateTeam ? "Organic" : "Viral",
 			"Auth Provider": providerName
 		});
 

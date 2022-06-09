@@ -11,8 +11,15 @@ sandbox/**
 .prettierignore
 .prettierrc
 *.code-workspace
+babel.config.js
 DEV_README.md
 package-lock.json
 tsconfig.json
+tsconfig.test.json
 tslint.json
 webpack.config.js
+out/**
+.vscode-test/**
+test-projects/**
+coverage
+newrelic-browser.js

@@ -399,6 +399,9 @@ namespace CodeStream.VisualStudio.Core.Models {
 		[JsonProperty("disableStrictSSL")]
 		// ReSharper disable once InconsistentNaming
 		public bool DisableStrictSSL { get; set; }
+
+		[JsonProperty("newRelicTelemetryEnabled")]
+		public bool NewRelicTelemetryEnabled { get; set; }
 	}
 
 	public class CreatePostResponse {
@@ -506,7 +509,6 @@ namespace CodeStream.VisualStudio.Core.Models {
 		public string Email { get; set; }
 		public T PasswordOrToken { get; set; }
 		public string SignupToken { get; set; }
-		public string Team { get; set; }
 		public string TeamId { get; set; }
 		public Extension Extension { get; set; }
 		public Ide Ide { get; set; }
@@ -520,6 +522,9 @@ namespace CodeStream.VisualStudio.Core.Models {
 		public string ProxySupport { get; set; }
 		[JsonProperty("proxy")]
 		public Proxy Proxy { get; set; }
+
+		[JsonProperty("newRelicTelemetryEnabled")]
+		public bool NewRelicTelemetryEnabled { get; set; }
 	}
 
 	public class LoginRequest : LoginRequestBase<string> { }
@@ -527,7 +532,6 @@ namespace CodeStream.VisualStudio.Core.Models {
 	public class TokenLoginRequest {
 		public JToken Token { get; set; }
 		public string TeamId { get; set; }
-		public string Team { get; set; }
 	}
 
 	public class TextDocumentIdentifier {

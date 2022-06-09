@@ -1,6 +1,7 @@
 "use strict";
 import { CSLoginResponse, CSMe, CSMePreferences } from "@codestream/protocols/api";
 import { Container } from "../container";
+import { Company } from "./models/company";
 import { Team } from "./models/team";
 import { User } from "./models/user";
 import { CodeStreamSession } from "./session";
@@ -8,6 +9,7 @@ import { CodeStreamSession } from "./session";
 export class SessionState {
 	constructor(
 		private readonly _session: CodeStreamSession,
+		public readonly companyId: string,
 		public readonly teamId: string,
 		private readonly _data: CSLoginResponse
 	) {}
@@ -32,6 +34,17 @@ export class SessionState {
 		return this._team!;
 	}
 
+	private _company: Company | undefined;
+	get company() {
+		if (this._company === undefined) {
+			this._company = new Company(
+				this._session,
+				this._data.companies.find(t => t.id === this.companyId)!
+			);
+		}
+		return this._company!;
+	}
+
 	private _user: User | undefined;
 	get user() {
 		if (this._user === undefined) {
@@ -42,6 +55,10 @@ export class SessionState {
 
 	hasSingleTeam(): boolean {
 		return this._data!.teams.length === 1;
+	}
+
+	hasSingleCompany(): boolean {
+		return this._data!.companies.length === 1;
 	}
 
 	async updateTeams() {

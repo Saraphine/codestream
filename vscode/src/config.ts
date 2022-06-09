@@ -11,6 +11,7 @@ export interface Config {
 	autoHideMarkers: boolean;
 	autoSignIn: boolean;
 	disableStrictSSL: boolean;
+	extraCerts: string;
 	email: string;
 	notifications: Notifications | null;
 	proxySupport: "override" | "on" | "off" | null;
@@ -19,7 +20,16 @@ export interface Config {
 	showInStatusBar: "left" | "right" | false;
 	showMarkerCodeLens: boolean;
 	showMarkerGlyphs: boolean;
+	goldenSignalsInEditor: boolean;
 	showShortcutTipOnSelection: boolean;
-	team: string;
 	traceLevel: TraceLevel;
+	showInstrumentationGlyphs?: boolean;
+	goldenSignalsInEditorFormat?: string;
 }
+
+export const ConfigSettingsNeedingReload = [
+	"disableStrictSSL",
+	"proxySupport",
+	"serverUrl",
+	"extraCerts"
+];

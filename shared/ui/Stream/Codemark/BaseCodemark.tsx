@@ -21,7 +21,7 @@ import styled from "styled-components";
 import Tooltip from "../Tooltip";
 import { HostApi } from "../..";
 import { MarkdownText } from "../MarkdownText";
-import { DropdownButton } from "../Review/DropdownButton";
+import { DropdownButton } from "../DropdownButton";
 import { useDispatch } from "react-redux";
 import { setCodemarkStatus } from "../actions";
 import { OpenUrlRequestType } from "@codestream/protocols/webview";

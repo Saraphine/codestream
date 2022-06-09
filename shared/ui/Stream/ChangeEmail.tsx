@@ -55,6 +55,7 @@ export const ChangeEmail = props => {
 		event.preventDefault();
 		onValidityChanged("email", isEmailValid(email));
 		if (!emailValidity) return;
+		if (pendingChange) return;
 
 		setLoading(true);
 		try {
@@ -102,7 +103,7 @@ export const ChangeEmail = props => {
 							defaultMessage="Something went wrong! Please try again, or "
 						/>
 						<FormattedMessage id="contactSupport" defaultMessage="contact support">
-							{text => <Link href="https://help.codestream.com">{text}</Link>}
+							{text => <Link href="https://docs.newrelic.com/docs/codestream/">{text}</Link>}
 						</FormattedMessage>
 					</>
 				)}

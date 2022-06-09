@@ -38,6 +38,7 @@ export const RepositionCodemark = (props: Props) => {
 		setLoading(true);
 		const scmInfo = await HostApi.instance.send(GetRangeScmInfoRequestType, {
 			uri: textEditorUri,
+			gitSha: textEditorGitSha,
 			range: textEditorSelection!
 		});
 		if (scmInfo && scmInfo.scm) {
@@ -67,6 +68,9 @@ export const RepositionCodemark = (props: Props) => {
 	});
 	const textEditorUri = useSelector((state: CodeStreamState) => {
 		return state.editorContext.textEditorUri;
+	});
+	const textEditorGitSha = useSelector((state: CodeStreamState) => {
+		return state.editorContext.textEditorGitSha;
 	});
 
 	useDidMount(() => {

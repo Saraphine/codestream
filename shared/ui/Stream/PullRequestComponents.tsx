@@ -441,7 +441,8 @@ export const PRReaction = styled.div`
 
 export const PRReactions = styled.div`
 	border-top: 1px solid var(--base-border-color);
-	margin: 10px -15px -10px -15px;
+	border-bottom: 1px solid var(--base-border-color);
+	margin: 10px -10px 10px -10px;
 	${PullRequestReactButton} {
 		display: none;
 	}
@@ -466,6 +467,16 @@ export const PRButtonRow = styled.div`
 		margin-right: -15px;
 		padding: 10px 15px 0 15px;
 	}
+	button + button {
+		margin-left: 10px;
+	}
+`;
+
+export const PRButtonRowFlex = styled.div`
+	padding-top: 10px;
+	text-align: left;
+	display: flex;
+
 	button + button {
 		margin-left: 10px;
 	}
@@ -931,7 +942,7 @@ export const PRCodeCommentReply = styled.div`
 	font-family: var(--font-family);
 	position: relative;
 	#input-div {
-		height: 28px !important; // 2px for the border, 30px matches headshot height
+		height: 30px !important; // 2px for the border, 30px matches headshot height
 		min-height: 28px !important;
 		padding: 5px !important;
 	}
@@ -1109,6 +1120,9 @@ export const PRIAmRequested = styled.div`
 
 export const PRErrorBox = styled.div`
 	margin: 10px 10px 20px 0;
+	&.in-review {
+		margin: 10px 0 0 0;
+	}
 	border: 1px solid ${PENDING_BORDER_COLOR};
 	background: ${PENDING_BACKGROUND_COLOR};
 	border-radius: 5px;
@@ -1123,6 +1137,12 @@ export const PRErrorBox = styled.div`
 	.message {
 		margin-left: 10px;
 	}
+`;
+
+export const PRErrorBoxSidebar = styled.div`
+	padding: 5px 10px 5px 10px;
+	fontsize: smaller;
+	background: ${PENDING_BACKGROUND_COLOR};
 `;
 
 export const PRCommentsInPatch = styled.div`
@@ -1162,6 +1182,27 @@ export const PRCodeCommentWrapper = styled.div`
 	@media only screen and (max-width: ${props => props.theme.breakpoint}) {
 		${PRHeadshot} {
 			display: none;
+		}
+	}
+	${PRReactions} {
+		border: none;
+		margin: -5px 0 15px 35px;
+		.mine {
+			background: rgba(90, 127, 255, 0.08);
+		}
+	}
+	${PRReaction} {
+		padding: 1px 8px;
+		margin: 0 5px 5px;
+		border: 1px solid var(--base-border-color);
+		border-radius: 5px;
+		.mine {
+			background: rgba(90, 127, 255, 0.08);
+		}
+	}
+	@media only screen and (max-width: ${props => props.theme.breakpoint}) {
+		${PRReactions} {
+			margin-left: -5px;
 		}
 	}
 `;

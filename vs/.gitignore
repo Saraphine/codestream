@@ -345,3 +345,4 @@ licenses/Release/teamdev.licenses
 src/CodeStream.VisualStudio/teamdev.licenses
 src/protocols/
 src/CodeStream.VisualStudio/Internal/CodeStream.VisualStudio.Shell.*.dll
+stats.json

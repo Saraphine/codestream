@@ -320,8 +320,11 @@ export class CodeStreamSession implements Disposable {
 	get serverUrl(): string {
 		return this._serverUrl;
 	}
-	setServerUrl(url: string) {
+	setServerUrl(url: string, environment?: string) {
 		this._serverUrl = url;
+		if (environment && this._environmentInfo) {
+			this._environmentInfo.environment = environment;
+		}
 	}
 
 	get signedIn() {
@@ -354,6 +357,11 @@ export class CodeStreamSession implements Disposable {
 	@signedIn
 	get team() {
 		return this._state!.team;
+	}
+
+	@signedIn
+	get company() {
+		return this._state!.company;
 	}
 
 	@signedIn
@@ -522,6 +530,11 @@ export class CodeStreamSession implements Disposable {
 		return this._state!.hasSingleTeam();
 	}
 
+	@signedIn
+	hasSingleCompany(): boolean {
+		return this._state!.hasSingleCompany();
+	}
+
 	async login(email: string, password: string, teamId?: string): Promise<LoginResult>;
 	async login(email: string, token: AccessToken, teamId?: string): Promise<LoginResult>;
 	async login(
@@ -541,7 +554,11 @@ export class CodeStreamSession implements Disposable {
 	}
 
 	@log()
-	async logout(reason: SessionSignedOutReason = SessionSignedOutReason.UserSignedOutFromWebview) {
+	async logout(
+		reason: SessionSignedOutReason = SessionSignedOutReason.UserSignedOutFromWebview,
+		newServerUrl?: string,
+		newEnvironment?: string
+	) {
 		this._id = undefined;
 		this._loginPromise = undefined;
 
@@ -559,9 +576,13 @@ export class CodeStreamSession implements Disposable {
 
 			this._email = undefined;
 			this._status = SessionStatus.SignedOut;
+			if (newEnvironment && this._environmentInfo) {
+				this._environmentInfo!.environment = newEnvironment;
+				Container.statusBar.update();
+			}
 
 			if (Container.agent !== undefined) {
-				void (await Container.agent.logout());
+				void (await Container.agent.logout(newServerUrl));
 			}
 
 			if (this._disposableAuthenticated !== undefined) {
@@ -587,26 +608,15 @@ export class CodeStreamSession implements Disposable {
 		try {
 			this.setStatus(SessionStatus.SigningIn);
 
-			if (!teamId) {
-				// If there is a configuration settings for a team, use that above others
-				teamId = Container.config.team
-					? undefined
-					: Container.context.workspaceState.get(WorkspaceState.TeamId);
-			}
-
 			let response;
 			if (typeof passwordOrToken === "string") {
 				response = await Container.agent.sendRequest(PasswordLoginRequestType, {
 					email: email,
-					password: passwordOrToken,
-					team: Container.config.team,
-					teamId: teamId
+					password: passwordOrToken
 				});
 			} else {
 				response = await Container.agent.sendRequest(TokenLoginRequestType, {
-					token: passwordOrToken,
-					team: Container.config.team,
-					teamId: teamId
+					token: passwordOrToken
 				});
 			}
 
@@ -679,8 +689,18 @@ export class CodeStreamSession implements Disposable {
 				Logger.error(ex, "failed to update workspaceState");
 			}
 		}
+		let companyId = "";
+		if (teamId) {
+			const team = response.loginResponse.teams.find(_ => _.id === teamId);
+			if (team) {
+				const company = response.loginResponse.companies.find(_ => _.id === team.companyId);
+				if (company) {
+					companyId = company.id;
+				}
+			}
+		}
 
-		this._state = new SessionState(this, teamId, response.loginResponse);
+		this._state = new SessionState(this, companyId, teamId, response.loginResponse);
 
 		this._disposableAuthenticated = Disposable.from(
 			Container.agent.onDidChangeDocumentMarkers(this.onDocumentMarkersChanged, this),

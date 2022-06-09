@@ -2,7 +2,7 @@ import { Index } from "../common";
 import {
 	TrelloList,
 	TrelloBoard,
-	ClubhouseProject,
+	ShortcutProject,
 	LinearProject,
 	LinearTeam,
 	JiraBoard,
@@ -78,9 +78,9 @@ export interface YouTrackIntegrationData extends ActiveIntegrationData {
 	currentProject?: YouTrackBoard;
 }
 
-export interface ClubhouseIntegrationData extends ActiveIntegrationData {
-	projects?: ClubhouseProject[];
-	currentProject?: ClubhouseProject;
+export interface ShortcutIntegrationData extends ActiveIntegrationData {
+	projects?: ShortcutProject[];
+	currentProject?: ShortcutProject;
 }
 
 export interface LinearIntegrationData extends ActiveIntegrationData {
@@ -90,9 +90,21 @@ export interface LinearIntegrationData extends ActiveIntegrationData {
 	currentTeam?: LinearTeam;
 }
 
-export interface ActiveIntegrationsState extends Index<ActiveIntegrationData> {}
+export interface NewRelicIntegrationData extends ActiveIntegrationData {}
+
+export interface LoadingStatus {
+	issuesLoading?: boolean;
+	initialLoadComplete?: boolean;
+}
+
+export interface ActiveIntegrationsState {
+	integrations: Index<ActiveIntegrationData>;
+	issuesLoading: boolean;
+	initialLoadComplete: boolean;
+}
 
 export enum ActiveIntegrationsActionType {
 	UpdateForProvider = "@activeIntegrations/UpdateForProvider",
-	DeleteForProvider = "@activeIntegrations/DeleteForProvider"
+	DeleteForProvider = "@activeIntegrations/DeleteForProvider",
+	SetIssuesLoading = "@activeIntegrations/IssuesLoading"
 }

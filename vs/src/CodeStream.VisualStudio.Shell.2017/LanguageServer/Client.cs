@@ -7,7 +7,6 @@ using CodeStream.VisualStudio.Core.Services;
 using Microsoft;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServer.Client;
-using Microsoft.VisualStudio.LanguageServer.Protocol;
 using Microsoft.VisualStudio.Threading;
 using Newtonsoft.Json;
 using Serilog;
@@ -57,8 +56,9 @@ namespace CodeStream.VisualStudio.Shell._2017.LanguageServer {
 			ISessionService sessionService,
 			IEventAggregator eventAggregator,
 			IBrowserServiceFactory browserServiceFactory,
-			ISettingsServiceFactory settingsServiceFactory)
-			: base(serviceProvider, sessionService, eventAggregator, browserServiceFactory, settingsServiceFactory, Log) {
+			ISettingsServiceFactory settingsServiceFactory,
+			IHttpClientService httpClientService)
+			: base(serviceProvider, sessionService, eventAggregator, browserServiceFactory, settingsServiceFactory, httpClientService, Log) {
 		}
 
 		public string Name => Application.Name;
@@ -107,7 +107,7 @@ namespace CodeStream.VisualStudio.Shell._2017.LanguageServer {
 			Connection connection = null;
 			try {
 				var settingsManager = SettingsServiceFactory.GetOrCreate(nameof(Client));
-				var process = LanguageServerProcess.Create(settingsManager?.GetAgentTraceLevel());
+				var process = LanguageServerProcess.Create(settingsManager, HttpClientService);
 
 				using (Log.CriticalOperation($"Started language server process. FileName={process.StartInfo.FileName} Arguments={process.StartInfo.Arguments}", Serilog.Events.LogEventLevel.Information)) {
 					if (process.Start()) {

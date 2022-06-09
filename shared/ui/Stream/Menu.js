@@ -175,7 +175,10 @@ export default class Menu extends Component {
 			if (tooFar > 0 && align !== "popupRight") {
 				// if we're a dropdown, alter the height
 				if (align.startsWith("bottom") || align.startsWith("dropdown")) {
-					this._div.style.top = rect.top - this._div.offsetHeight + "px";
+					// don't go above the top of the screen; check to see if the
+					// top is too far near the top.
+					if (rect.top - this._div.offsetHeight < 10) this._div.style.top = "10px";
+					else this._div.style.top = rect.top - this._div.offsetHeight + "px";
 					// const height = window.innerHeight - rect.bottom - 50;
 					// const ul = this._div.getElementsByTagName("ul")[0];
 					// if (ul) ul.style.maxHeight = height + "px";
@@ -297,6 +300,10 @@ export default class Menu extends Component {
 		modalRoot.classList.remove("active");
 	}
 
+	isEllipsisActive(element) {
+		return element.offsetWidth < element.scrollWidth;
+	}
+
 	componentDidUpdate(prevProps, prevState) {
 		if (this.state.closed && !prevState.closed) {
 			this.closeMenu();
@@ -312,6 +319,13 @@ export default class Menu extends Component {
 			const filteredItems = this.filterItems(this.props.items, true);
 			if (filteredItems.length === 1)
 				this.setState({ selected: this.calculateKey(filteredItems[0]) });
+		}
+
+		const $lis = document.querySelectorAll("li.menu-item");
+		const numLis = $lis.length;
+		for (let i = 0; i < numLis; i++) {
+			if (this.isEllipsisActive($lis[i]))
+				$lis[i].setAttribute("title", $lis[i].querySelector(".label").innerHTML);
 		}
 	}
 
@@ -495,7 +509,7 @@ export default class Menu extends Component {
 						{this.props.title}
 						<span className="icons">
 							{this.props.titleIcon}
-							{!this.props.noCloseIcon && <Icon onClick={e => this.props.action()} name="x" />}
+							{!this.props.noCloseIcon && <Icon onClick={e => this.props.action(e)} name="x" />}
 						</span>
 					</h3>
 				)}
@@ -606,16 +620,16 @@ export default class Menu extends Component {
 
 	handleMultiSelectKeyDown = event => {
 		if (event.key === "Shift" || event.which === 16) {
-			if(!this.state.isShiftHolded) {
-				this.setState({isShiftHolded: true, itemsRange: []});
+			if (!this.state.isShiftHolded) {
+				this.setState({ isShiftHolded: true, itemsRange: [] });
 			}
 		}
 	};
 
 	handleMultiSelectKeyUp = event => {
 		if (event.key === "Shift" || event.which === 16) {
-			if(!this.state.isShiftHolded) {
-				this.setState({isShiftHolded: false, itemsRange: []});
+			if (!this.state.isShiftHolded) {
+				this.setState({ isShiftHolded: false, itemsRange: [] });
 			}
 		}
 	};
@@ -628,17 +642,17 @@ export default class Menu extends Component {
 		if (this.state.isShiftHolded && item.inRange) {
 			switch (this.state.itemsRange.length) {
 				case 0:
-					this.setState({itemsRange: [this.calculateKey(item)]});
+					this.setState({ itemsRange: [this.calculateKey(item)] });
 					return;
 				case 1:
-					const actualItemsRange = this.state.itemsRange
+					const actualItemsRange = this.state.itemsRange;
 					actualItemsRange.push(this.calculateKey(item));
-					this.setState({itemsRange: actualItemsRange});
+					this.setState({ itemsRange: actualItemsRange });
 					item.action(actualItemsRange);
 					this.props.action(null);
 					return;
 				default:
-					this.setState({itemsRange: [this.calculateKey(item)]});
+					this.setState({ itemsRange: [this.calculateKey(item)] });
 					return;
 			}
 		}

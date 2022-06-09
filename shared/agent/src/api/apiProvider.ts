@@ -1,3 +1,4 @@
+import { HistoryFetchInfo } from "broadcaster/broadcaster";
 import { RequestInit, Response } from "node-fetch";
 import { Disposable, Event } from "vscode-languageserver";
 import {
@@ -10,6 +11,8 @@ import {
 	ArchiveStreamRequest,
 	ArchiveStreamResponse,
 	Capabilities,
+	ClaimCodeErrorRequest,
+	ClaimCodeErrorResponse,
 	CloseStreamRequest,
 	CloseStreamResponse,
 	ConnectionStatus,
@@ -29,8 +32,12 @@ import {
 	CreatePostResponse,
 	CreateRepoRequest,
 	CreateRepoResponse,
+	DeleteCodeErrorRequest,
+	DeleteCodeErrorResponse,
 	DeleteCodemarkRequest,
 	DeleteCodemarkResponse,
+	DeleteCompanyRequest,
+	DeleteCompanyResponse,
 	DeleteMarkerRequest,
 	DeleteMarkerResponse,
 	DeletePostRequest,
@@ -41,6 +48,8 @@ import {
 	DeleteUserResponse,
 	EditPostRequest,
 	EditPostResponse,
+	FetchCodeErrorsRequest,
+	FetchCodeErrorsResponse,
 	FetchCodemarksRequest,
 	FetchCodemarksResponse,
 	FetchCompaniesRequest,
@@ -71,17 +80,23 @@ import {
 	FetchUnreadStreamsResponse,
 	FetchUsersRequest,
 	FetchUsersResponse,
+	FollowCodeErrorRequest,
+	FollowCodeErrorResponse,
 	FollowCodemarkRequest,
 	FollowCodemarkResponse,
 	FollowReviewRequest,
 	FollowReviewResponse,
+	GenerateLoginCodeRequest,
+	GetCodeErrorRequest,
+	GetCodeErrorResponse,
 	GetCodemarkRequest,
 	GetCodemarkResponse,
 	GetCompanyRequest,
 	GetCompanyResponse,
 	GetMarkerRequest,
 	GetMarkerResponse,
-	GetMeResponse,
+	GetNewRelicSignupJwtTokenRequest,
+	GetNewRelicSignupJwtTokenResponse,
 	GetPostRequest,
 	GetPostResponse,
 	GetPostsRequest,
@@ -101,12 +116,16 @@ import {
 	GetUserResponse,
 	InviteUserRequest,
 	InviteUserResponse,
+	JoinCompanyRequest,
+	JoinCompanyResponse,
 	JoinStreamRequest,
 	JoinStreamResponse,
 	KickUserRequest,
 	KickUserResponse,
 	LeaveStreamRequest,
 	LeaveStreamResponse,
+	LookupNewRelicOrganizationsRequest,
+	LookupNewRelicOrganizationsResponse,
 	MarkItemReadRequest,
 	MarkItemReadResponse,
 	MarkPostUnreadRequest,
@@ -131,13 +150,14 @@ import {
 	SetCodemarkPinnedResponse,
 	SetCodemarkStatusRequest,
 	SetCodemarkStatusResponse,
-	SetModifiedReposRequest,
 	SetStreamPurposeRequest,
 	SetStreamPurposeResponse,
-	ThirdPartyProviderSetTokenRequest,
+	ThirdPartyProviderSetInfoRequest,
 	UnarchiveStreamRequest,
 	UnarchiveStreamResponse,
 	Unreads,
+	UpdateCodeErrorRequest,
+	UpdateCodeErrorResponse,
 	UpdateCodemarkRequest,
 	UpdateCodemarkResponse,
 	UpdateInvisibleRequest,
@@ -164,6 +184,7 @@ import {
 	CSApiCapabilities,
 	CSApiFeatures,
 	CSChannelStream,
+	CSCodeError,
 	CSCodemark,
 	CSCompany,
 	CSDirectStream,
@@ -174,6 +195,7 @@ import {
 	CSMePreferences,
 	CSMsTeamsConversationRequest,
 	CSMsTeamsConversationResponse,
+	CSObjectStream,
 	CSPost,
 	CSRepository,
 	CSReview,
@@ -191,6 +213,8 @@ interface BasicLoginOptions {
 	teamId?: string;
 	codemarkId?: string;
 	reviewId?: string;
+	codeErrorId?: string;
+	errorGroupGuid?: string;
 }
 
 export interface CredentialsLoginOptions extends BasicLoginOptions {
@@ -209,7 +233,17 @@ export interface TokenLoginOptions extends BasicLoginOptions {
 	token: AccessToken;
 }
 
-export type LoginOptions = CredentialsLoginOptions | OneTimeCodeLoginOptions | TokenLoginOptions;
+export interface LoginCodeLoginOptions extends BasicLoginOptions {
+	type: "loginCode";
+	email: string;
+	code: string;
+}
+
+export type LoginOptions =
+	| CredentialsLoginOptions
+	| OneTimeCodeLoginOptions
+	| TokenLoginOptions
+	| LoginCodeLoginOptions;
 
 export enum MessageType {
 	Connection = "connection",
@@ -222,6 +256,7 @@ export enum MessageType {
 	Preferences = "preferences",
 	Repositories = "repos",
 	Reviews = "reviews",
+	CodeErrors = "codeErrors",
 	Streams = "streams",
 	Teams = "teams",
 	Unreads = "unreads",
@@ -274,9 +309,14 @@ export interface ReviewsRTMessage {
 	data: CSReview[];
 }
 
+export interface CodeErrorsRTMessage {
+	type: MessageType.CodeErrors;
+	data: CSCodeError[];
+}
+
 export interface StreamsRTMessage {
 	type: MessageType.Streams;
-	data: (CSChannelStream | CSDirectStream)[];
+	data: (CSChannelStream | CSDirectStream | CSObjectStream)[];
 }
 
 export interface TeamsRTMessage {
@@ -301,6 +341,7 @@ export interface EchoMessage {
 export interface RawRTMessage {
 	type: MessageType;
 	data?: any;
+	blockUntilProcessed?: boolean;
 }
 
 export type RTMessage =
@@ -313,6 +354,7 @@ export type RTMessage =
 	| PreferencesRTMessage
 	| RepositoriesRTMessage
 	| ReviewsRTMessage
+	| CodeErrorsRTMessage
 	| StreamsRTMessage
 	| TeamsRTMessage
 	| UnreadsRTMessage
@@ -322,9 +364,9 @@ export type RTMessage =
 export interface ApiProvider {
 	onDidReceiveMessage: Event<RTMessage>;
 
+	readonly baseUrl: string;
 	readonly teamId: string;
 	readonly userId: string;
-	readonly meUser: CSMe | undefined;
 	readonly capabilities: Capabilities;
 	readonly features: CSApiFeatures | undefined;
 
@@ -335,16 +377,15 @@ export interface ApiProvider {
 	dispose(): Promise<void>;
 
 	login(options: LoginOptions): Promise<ApiProviderLoginResponse>;
+	generateLoginCode(request: GenerateLoginCodeRequest): Promise<void>;
 	subscribe(types?: MessageType[]): Promise<void>;
 
 	grantBroadcasterChannelAccess(token: string, channel: string): Promise<{}>;
 
-	getMe(): Promise<GetMeResponse>;
 	getUnreads(request: GetUnreadsRequest): Promise<GetUnreadsResponse>;
 	updatePreferences(request: UpdatePreferencesRequest): Promise<UpdatePreferencesResponse>;
 	updateInvisible(request: UpdateInvisibleRequest): Promise<UpdateInvisibleResponse>;
 	updateStatus(request: UpdateStatusRequest): Promise<UpdateStatusResponse>;
-	setModifiedRepos(request: SetModifiedReposRequest): Promise<void>;
 	getPreferences(): Promise<GetPreferencesResponse>;
 	updatePresence(request: UpdatePresenceRequest): Promise<UpdatePresenceResponse>;
 	getTelemetryKey(): Promise<string>;
@@ -363,6 +404,7 @@ export interface ApiProvider {
 	updateCodemark(request: UpdateCodemarkRequest): Promise<UpdateCodemarkResponse>;
 	followCodemark(request: FollowCodemarkRequest): Promise<FollowCodemarkResponse>;
 	followReview(request: FollowReviewRequest): Promise<FollowReviewResponse>;
+	followCodeError(request: FollowCodeErrorRequest): Promise<FollowCodeErrorResponse>;
 
 	createCodemarkPermalink(
 		request: CreateCodemarkPermalinkRequest
@@ -403,6 +445,7 @@ export interface ApiProvider {
 	fetchRepos(request: FetchReposRequest): Promise<FetchReposResponse>;
 	getRepo(request: GetRepoRequest): Promise<GetRepoResponse>;
 	matchRepos(request: MatchReposRequest): Promise<MatchReposResponse>;
+	matchRepo(request: MatchReposRequest): Promise<MatchReposResponse>;
 
 	fetchMsTeamsConversations(
 		request: CSMsTeamsConversationRequest
@@ -420,6 +463,12 @@ export interface ApiProvider {
 	fetchReviewCheckpointDiffs(
 		request: FetchReviewCheckpointDiffsRequest
 	): Promise<FetchReviewCheckpointDiffsResponse>;
+
+	fetchCodeErrors(request: FetchCodeErrorsRequest): Promise<FetchCodeErrorsResponse>;
+	claimCodeError(request: ClaimCodeErrorRequest): Promise<ClaimCodeErrorResponse>;
+	getCodeError(request: GetCodeErrorRequest): Promise<GetCodeErrorResponse>;
+	updateCodeError(request: UpdateCodeErrorRequest): Promise<UpdateCodeErrorResponse>;
+	deleteCodeError(request: DeleteCodeErrorRequest): Promise<DeleteCodeErrorResponse>;
 
 	createChannelStream(request: CreateChannelStreamRequest): Promise<CreateChannelStreamResponse>;
 	createDirectStream(request: CreateDirectStreamRequest): Promise<CreateDirectStreamResponse>;
@@ -446,7 +495,15 @@ export interface ApiProvider {
 
 	fetchCompanies(request: FetchCompaniesRequest): Promise<FetchCompaniesResponse>;
 	getCompany(request: GetCompanyRequest): Promise<GetCompanyResponse>;
+	deleteCompany(request: DeleteCompanyRequest): Promise<DeleteCompanyResponse>;
 	setCompanyTestGroups(companyId: string, request: { [key: string]: string }): Promise<CSCompany>;
+	addCompanyNewRelicInfo(
+		companyId: string,
+		accountIds?: number[],
+		orgIds?: number[]
+	): Promise<boolean>;
+	joinCompany(request: JoinCompanyRequest): Promise<JoinCompanyResponse>;
+	joinCompanyFromEnvironment(request: JoinCompanyRequest): Promise<JoinCompanyResponse>;
 
 	fetchUsers(request: FetchUsersRequest): Promise<FetchUsersResponse>;
 	getUser(request: GetUserRequest): Promise<GetUserResponse>;
@@ -459,12 +516,7 @@ export interface ApiProvider {
 		providerId: string;
 		sharing?: boolean;
 	}): Promise<{ code: string }>;
-	setThirdPartyProviderToken(request: ThirdPartyProviderSetTokenRequest): Promise<void>;
-	setThirdPartyProviderInfo(request: {
-		providerId: string;
-		host?: string;
-		data: { [key: string]: any };
-	}): Promise<void>;
+	setThirdPartyProviderInfo(request: ThirdPartyProviderSetInfoRequest): Promise<void>;
 	disconnectThirdPartyProvider(request: {
 		providerId: string;
 		providerTeamId?: string;
@@ -480,8 +532,18 @@ export interface ApiProvider {
 		subId?: string;
 	}): Promise<CSMe>;
 
+	getNewRelicSignupJwtToken(
+		request: GetNewRelicSignupJwtTokenRequest
+	): Promise<GetNewRelicSignupJwtTokenResponse>;
+
+	lookupNewRelicOrganizations(
+		request: LookupNewRelicOrganizationsRequest
+	): Promise<LookupNewRelicOrganizationsResponse>;
+
 	verifyConnectivity(): Promise<VerifyConnectivityResponse>;
 	setServerUrl(url: string): void;
+
+	announceHistoryFetch(info: HistoryFetchInfo): void;
 
 	get<R extends object>(url: string, token?: string): Promise<R>;
 	post<RQ extends object, R extends object>(url: string, body: any, token?: string): Promise<R>;

@@ -1,70 +1,29 @@
 "use strict";
-import { GitRemoteLike, GitRepository } from "git/gitService";
-import { toRepoName } from "../git/utils";
-import * as paths from "path";
-import * as qs from "querystring";
+import { GitRemoteLike } from "git/gitService";
 import { URI } from "vscode-uri";
-import { SessionContainer } from "../container";
+import { toRepoName } from "../git/utils";
 import { Logger } from "../logger";
-import { Markerish, MarkerLocationManager } from "../managers/markerLocationManager";
-import { MAX_RANGE_VALUE } from "../markerLocation/calculator";
-import { DocumentMarker, ProviderConfigurationData } from "../protocol/agent.protocol";
 import {
-	CodemarkType,
-	CSBitbucketProviderInfo,
-	CSLocationArray,
-	CSReferenceLocation
-} from "../protocol/api.protocol";
-import { Arrays, log, lspProvider, Strings } from "../system";
+	ProviderConfigurationData,
+	ProviderGetForkedReposResponse
+} from "../protocol/agent.protocol";
+import { CSBitbucketProviderInfo } from "../protocol/api.protocol";
+import { log, lspProvider } from "../system";
+
 import {
-	ApiResponse,
-	getOpenedRepos,
 	getRemotePaths,
 	ProviderCreatePullRequestRequest,
 	ProviderCreatePullRequestResponse,
+	ProviderGetRepoInfoResponse,
 	ProviderPullRequestInfo,
 	PullRequestComment,
-	REFRESH_TIMEOUT,
-	ThirdPartyIssueProviderBase,
-	ThirdPartyProviderSupportsIssues,
-	ThirdPartyProviderSupportsPullRequests
+	ThirdPartyIssueProviderBase
 } from "./provider";
-
-interface BitbucketRepo {
-	uuid: string;
-	full_name: string;
-	path: string;
-	owner: {
-		uuid: string;
-		username: string;
-		type: string;
-	};
-	has_issues: boolean;
-}
 
 interface BitbucketServerRepo {
 	id: string;
 	name: string;
 	path: string;
-}
-
-/*
-interface BitbucketPermission {
-	permission: string;
-	repository: BitbucketRepo;
-}
-*/
-
-interface BitbucketUser {
-	uuid: string;
-	display_name: string;
-	account_id: string;
-}
-
-interface BitbucketValues<T> {
-	values: T;
-	isLastPage?: boolean;
-	nextPageStart?: number;
 }
 
 interface BitbucketPullRequest {
@@ -89,49 +48,12 @@ interface BitbucketPullRequest {
 	};
 }
 
-interface BitbucketPullRequestComment {
-	id: string;
-	user: {
-		account_id: string;
-		nickname: string;
-	};
-	content: {
-		raw: string;
-	};
-	created_on: string;
-	links: { html: { href: string }; code: { href: string } };
-	inline: {
-		to?: number;
-		from?: number;
-		outdated?: boolean;
-		path: string;
-	};
-	pullrequest: {
-		id: number;
-		title: string;
-		links: {
-			html: {
-				href: string;
-			};
-		};
-	};
-}
-
-interface GetPullRequestsResponse extends BitbucketValues<BitbucketPullRequest[]> {}
-
-interface GetPullRequestCommentsResponse extends BitbucketValues<BitbucketPullRequestComment[]> {}
-
 /**
  * BitBucket provider
  * @see https://developer.atlassian.com/bitbucket/api/2/reference/
  */
 @lspProvider("bitbucket_server")
 export class BitbucketServerProvider extends ThirdPartyIssueProviderBase<CSBitbucketProviderInfo> {
-	/*implements ThirdPartyProviderSupportsIssues, ThirdPartyProviderSupportsPullRequests*/
-	// private _bitbucketUserId: string | undefined;
-	private _knownRepos = new Map<string, BitbucketServerRepo>();
-	private _repos: BitbucketServerRepo[] = [];
-
 	get displayName() {
 		return "Bitbucket Server";
 	}
@@ -176,23 +98,16 @@ export class BitbucketServerProvider extends ThirdPartyIssueProviderBase<CSBitbu
 		};
 	}
 
-	@log()
-	async configure(request: ProviderConfigurationData) {
-		await this.session.api.setThirdPartyProviderToken({
-			providerId: this.providerConfig.id,
-			host: request.host,
-			token: request.token,
-			data: {
-				baseUrl: request.baseUrl
-			}
-		});
-		this.session.updateProviders();
+	canConfigure() {
+		return true;
 	}
 
 	async onConnected(providerInfo?: CSBitbucketProviderInfo) {
 		super.onConnected(providerInfo);
-		// this._bitbucketUserId = await this.getMemberId();
-		this._knownRepos = new Map<string, BitbucketServerRepo>();
+	}
+
+	async verifyConnection(config: ProviderConfigurationData): Promise<void> {
+		await this.get<any>("/users?limit=1");
 	}
 
 	getRepoByPath(path: string) {
@@ -202,19 +117,6 @@ export class BitbucketServerProvider extends ThirdPartyIssueProviderBase<CSBitbu
 		} else {
 			throw new Error("improper bitbucket path");
 		}
-	}
-
-	@log()
-	async getPullRequestDocumentMarkers({
-		uri,
-		repoId,
-		streamId
-	}: {
-		uri: URI;
-		repoId: string | undefined;
-		streamId: string;
-	}): Promise<DocumentMarker[]> {
-		return super.getPullRequestDocumentMarkersCore({ uri, repoId, streamId });
 	}
 
 	async getRemotePaths(repo: any, _projectsByRemotePath: any) {
@@ -228,7 +130,7 @@ export class BitbucketServerProvider extends ThirdPartyIssueProviderBase<CSBitbu
 		return remotePaths;
 	}
 
-	protected getOwnerFromRemote(remote: string): { owner: string; name: string } {
+	getOwnerFromRemote(remote: string): { owner: string; name: string } {
 		// HACKitude yeah, sorry
 		const uri = URI.parse(remote);
 		const split = uri.path.split("/");
@@ -279,32 +181,62 @@ export class BitbucketServerProvider extends ThirdPartyIssueProviderBase<CSBitbu
 				};
 			}
 			const { owner, name } = this.getOwnerFromRemote(request.remote);
-			const createPullRequestResponse = await this.post<
-				BitbucketServerCreatePullRequestRequest,
-				BitbucketServerCreatePullRequestResponse
-			>(`/projects/${owner}/repos/${name}/pull-requests`, {
-				fromRef: {
-					id: request.headRefName,
-					repository: {
-						project: {
-							key: repoInfo.project.key
-						},
-						slug: name
-					}
-				},
-				toRef: {
-					id: request.baseRefName,
-					repository: {
-						project: {
-							key: repoInfo.project.key
-						},
-						slug: name
-					}
-				},
-				title: request.title,
-				description: this.createDescription(request)
-			});
 
+			let createPullRequestResponse;
+			if (request.isFork) {
+				const split = request.baseRefRepoNameWithOwner!.split("/");
+				createPullRequestResponse = await this.post<
+					BitbucketServerCreatePullRequestRequest,
+					BitbucketServerCreatePullRequestResponse
+				>(`/projects/${split[0]}/repos/${split[1]}/pull-requests`, {
+					fromRef: {
+						id: request.headRefName,
+						repository: {
+							project: {
+								key: repoInfo.key!
+							},
+							slug: name
+						}
+					},
+					toRef: {
+						id: request.baseRefName,
+						repository: {
+							project: {
+								key: split[0]!
+							},
+							slug: split[1]
+						}
+					},
+					title: request.title,
+					description: this.createDescription(request)
+				});
+			} else {
+				createPullRequestResponse = await this.post<
+					BitbucketServerCreatePullRequestRequest,
+					BitbucketServerCreatePullRequestResponse
+				>(`/projects/${owner}/repos/${name}/pull-requests`, {
+					fromRef: {
+						id: request.headRefName,
+						repository: {
+							project: {
+								key: repoInfo.key!
+							},
+							slug: name
+						}
+					},
+					toRef: {
+						id: request.baseRefName,
+						repository: {
+							project: {
+								key: repoInfo.key!
+							},
+							slug: name
+						}
+					},
+					title: request.title,
+					description: this.createDescription(request)
+				});
+			}
 			const title = `#${createPullRequestResponse.body.id} ${createPullRequestResponse.body.title}`;
 			return {
 				url:
@@ -330,7 +262,8 @@ export class BitbucketServerProvider extends ThirdPartyIssueProviderBase<CSBitbu
 		}
 	}
 
-	async getRepoInfo(request: { remote: string }): Promise<any> {
+	@log()
+	async getRepoInfo(request: { remote: string }): Promise<ProviderGetRepoInfoResponse> {
 		try {
 			const { owner, name } = this.getOwnerFromRemote(request.remote);
 			const repoResponse = await this.get<BitbucketServerRepo>(`/projects/${owner}/repos/${name}`);
@@ -357,116 +290,90 @@ export class BitbucketServerProvider extends ThirdPartyIssueProviderBase<CSBitbu
 				});
 			}
 			return {
+				owner,
+				name,
 				id: repoResponse.body.id,
-				project: {
-					key: repoResponse.body.project.key
-				},
+				isFork: repoResponse.body.origin != null,
+				key: repoResponse.body.project.key,
 				defaultBranch: defaultBranchName,
 				pullRequests: pullRequests
 			};
 		} catch (ex) {
-			Logger.error(ex, `${this.displayName}: getRepoInfo`, {
-				remote: request.remote
-			});
-			return {
-				error: {
-					type: "PROVIDER",
-					message: `${this.displayName}: ${ex.message}`
-				}
-			};
+			return this.handleProviderError(ex, request);
 		}
 	}
 
-	private _commentsByRepoAndPath = new Map<
-		string,
-		{ expiresAt: number; comments: Promise<PullRequestComment[]> }
-	>();
+	async getForkedRepos(request: { remote: string }): Promise<ProviderGetForkedReposResponse> {
+		try {
+			const { owner, name } = this.getOwnerFromRemote(request.remote);
+
+			const repoResponse = await this.get<BitbucketServerRepo>(`/projects/${owner}/repos/${name}`);
+
+			const parentOrSelfProject = repoResponse.body.origin
+				? repoResponse.body.origin
+				: repoResponse.body;
+
+			const branchesByProjectId = new Map<string, any[]>();
+			if (repoResponse.body.origin) {
+				const branchesResponse = await this.get<any[]>(
+					`/projects/${repoResponse.body.project.key}/repos/${repoResponse.body.slug}/branches`
+				);
+				branchesByProjectId.set(repoResponse.body.origin.uuid, branchesResponse.body.values as any);
+			}
+			const branchesResponse = await this.get<any[]>(`/projects/${owner}/repos/${name}/branches`);
+			branchesByProjectId.set(repoResponse.body.uuid, branchesResponse.body.values as any);
+
+			const forksResponse = await this.get<any>(`/projects/${owner}/repos/${name}/forks`);
+
+			for (const project of forksResponse.body.values) {
+				const branchesResponse = await this.get<any[]>(
+					`/projects/${project.project.key}/repos/${project.project.slug}/branches`
+				);
+				branchesByProjectId.set(project.uuid, branchesResponse.body.values as any);
+			}
+
+			const response = {
+				self: {
+					nameWithOwner: `${owner}/${name}`,
+					owner: owner,
+					id: repoResponse.body.uuid,
+					refs: {
+						nodes: branchesByProjectId
+							.get(repoResponse.body.uuid)!
+							.map(branch => ({ name: branch.displayId }))
+					}
+				},
+				forks: (forksResponse?.body?.values).map((fork: any) => ({
+					nameWithOwner: `${fork.project.key}/${fork.slug}`,
+					owner: fork.slug,
+					id: fork.uuid,
+					refs: {
+						nodes: branchesByProjectId.get(fork.uuid)!.map(branch => ({ name: branch.displayId }))
+					}
+				}))
+			} as ProviderGetForkedReposResponse;
+			if (repoResponse.body.origin) {
+				response.parent = {
+					nameWithOwner: `${parentOrSelfProject.project.key}/${parentOrSelfProject.slug}`,
+					owner: parentOrSelfProject.project.key,
+					id: parentOrSelfProject.uuid,
+					refs: {
+						nodes: branchesByProjectId
+							.get(parentOrSelfProject.uuid)!
+							.map(branch => ({ name: branch.displayId }))
+					}
+				};
+			}
+			return response;
+		} catch (ex) {
+			return this.handleProviderError(ex, request);
+		}
+	}
 
 	getIsMatchingRemotePredicate() {
 		const baseUrl = this._providerInfo?.data?.baseUrl || this.getConfig().host;
 		const configDomain = baseUrl ? URI.parse(baseUrl).authority : "";
 		return (r: GitRemoteLike) => configDomain !== "" && r.domain === configDomain;
-	}
-
-	@log()
-	protected async getCommentsForPath(
-		filePath: string,
-		repo: GitRepository
-	): Promise<PullRequestComment[] | undefined> {
-		const cc = Logger.getCorrelationContext();
-
-		try {
-			const relativePath = Strings.normalizePath(paths.relative(repo.path, filePath));
-			const cacheKey = `${repo.path}|${relativePath}`;
-
-			const cachedComments = this._commentsByRepoAndPath.get(cacheKey);
-			if (cachedComments !== undefined && cachedComments.expiresAt > new Date().getTime()) {
-				// NOTE: Keep this await here, so any errors are caught here
-				return await cachedComments.comments;
-			}
-			super.invalidatePullRequestDocumentMarkersCache();
-
-			const remotePath = await getRemotePaths(
-				repo,
-				this.getIsMatchingRemotePredicate(),
-				this._knownRepos
-			);
-
-			const commentsPromise: Promise<PullRequestComment[]> =
-				remotePath != null
-					? this._getCommentsForPathCore(filePath, relativePath, remotePath)
-					: Promise.resolve([]);
-			this._commentsByRepoAndPath.set(cacheKey, {
-				expiresAt: new Date().setMinutes(new Date().getMinutes() + REFRESH_TIMEOUT),
-				comments: commentsPromise
-			});
-
-			// Since we aren't cached, we want to just kick of the request to get the comments (which will fire a notification)
-			// This could probably be enhanced to wait for the commentsPromise for a short period of time (maybe 1s?) to see if it will complete, to avoid the notification roundtrip for fast requests
-			return undefined;
-		} catch (ex) {
-			Logger.error(ex, cc);
-			return undefined;
-		}
-	}
-
-	private async _getCommentsForPathCore(
-		filePath: string,
-		relativePath: string,
-		remotePaths: string[]
-	) {
-		const comments = [];
-
-		for (const remotePath of remotePaths) {
-			const pullRequestsResponse = await this.get<GetPullRequestsResponse>(
-				`/repositories/${remotePath}/pullrequests?${qs.stringify({ q: "comment_count>0" })}`
-			);
-
-			const prComments = (
-				await Promise.all(
-					pullRequestsResponse.body.values.map(pr => this._getPullRequestComments(pr, relativePath))
-				)
-			).reduce((group, current) => group.concat(current), []);
-
-			comments.push(...prComments);
-		}
-
-		// If we have any comments, fire a notification
-		if (comments.length !== 0) {
-			void SessionContainer.instance().documentMarkers.fireDidChangeDocumentMarkers(
-				URI.file(filePath).toString(),
-				"codemarks"
-			);
-		}
-
-		return comments;
-	}
-
-	private async _getPullRequestComments(
-		pr: BitbucketPullRequest,
-		filePath: string
-	): Promise<PullRequestComment[]> {
-		return [];
 	}
 }
 
@@ -507,7 +414,9 @@ interface BitbucketServerBranch {
 }
 
 interface BitbucketServerRepo {
+	uuid: string;
 	id: string;
+	slug?: string;
 	project: {
 		key: string;
 	};
@@ -515,4 +424,5 @@ interface BitbucketServerRepo {
 		name?: string;
 		type?: string;
 	};
+	origin?: any;
 }

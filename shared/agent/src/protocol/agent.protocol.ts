@@ -5,6 +5,7 @@ import { LoginResponse } from "./agent.protocol.auth";
 import { Unreads } from "./agent.protocol.notifications";
 import { ThirdPartyProviders } from "./agent.protocol.providers";
 import { CSCompany, CSMePreferences, CSRepository, CSStream, CSTeam, CSUser } from "./api.protocol";
+import { CreateCompanyRequest, CreateCompanyResponse } from "./agent.protocol.companies";
 
 export * from "./agent.protocol.notifications";
 
@@ -17,6 +18,7 @@ export * from "./agent.protocol.posts";
 export * from "./agent.protocol.repos";
 export * from "./agent.protocol.textFiles";
 export * from "./agent.protocol.reviews";
+export * from "./agent.protocol.codeErrors";
 export * from "./agent.protocol.streams";
 export * from "./agent.protocol.teams";
 export * from "./agent.protocol.users";
@@ -34,8 +36,14 @@ export * from "./agent.protocol.trello";
 export * from "./agent.protocol.youtrack";
 export * from "./agent.protocol.azuredevops";
 export * from "./agent.protocol.okta";
-export * from "./agent.protocol.clubhouse";
+export * from "./agent.protocol.shortcut";
 export * from "./agent.protocol.linear";
+export * from "./agent.protocol.newrelic";
+
+export * from "./agent.protocol.nr";
+export * from "./agent.protocol.pixie";
+
+export * from "./agent.protocol.errors";
 
 export interface Document {
 	uri: string;
@@ -81,6 +89,8 @@ export enum CodeStreamEnvironment {
 	Local = "local",
 	Production = "prod",
 	OnPrem = "onprem",
+	RegionUS = "us",
+	RegionEU = "eu",
 	Unknown = "unknown"
 }
 
@@ -88,6 +98,9 @@ export interface CodeStreamEnvironmentInfo {
 	environment: CodeStreamEnvironment | string;
 	isOnPrem: boolean;
 	isProductionCloud: boolean;
+	newRelicLandingServiceUrl?: string;
+	newRelicApiUrl?: string;
+	environmentHosts?: EnvironmentHost[];
 }
 
 export enum TraceLevel {
@@ -118,18 +131,18 @@ export interface BaseAgentOptions {
 	proxySupport?: "override" | "on" | "off";
 	serverUrl: string;
 	disableStrictSSL?: boolean;
+	extraCerts?: string;
 	traceLevel: TraceLevel;
 	recordRequests?: boolean;
 	workspaceFolders?: WorkspaceFolder[];
 	machineId?: string;
+	newRelicTelemetryEnabled?: boolean;
 }
 
 export interface AgentOptions extends BaseAgentOptions {
 	email: string;
 	passwordOrToken: string | AccessToken;
 	signupToken: string;
-	team: string;
-	teamId: string;
 }
 
 export interface AgentState {
@@ -141,6 +154,7 @@ export interface AgentState {
 	userId: string;
 	codemarkId?: string;
 	reviewId?: string;
+	codeErrorId?: string;
 }
 
 export interface AgentInitializeResult extends InitializeResult {
@@ -154,6 +168,13 @@ export interface ApiRequest {
 }
 export const ApiRequestType = new RequestType<ApiRequest, any, void, void>("codestream/api");
 
+export interface EnvironmentHost {
+	name: string;
+	shortName: string;
+	publicApiUrl: string;
+	accessToken?: string;
+}
+
 export interface VerifyConnectivityResponse {
 	ok: boolean;
 	error?: {
@@ -166,6 +187,9 @@ export interface VerifyConnectivityResponse {
 	environment?: string;
 	isOnPrem?: boolean;
 	isProductionCloud?: boolean;
+	newRelicLandingServiceUrl?: string;
+	newRelicApiUrl?: string;
+	environmentHosts?: EnvironmentHost[];
 }
 
 export const VerifyConnectivityRequestType = new RequestType<
@@ -204,7 +228,8 @@ export enum ReportingMessageType {
 
 export interface ReportMessageRequest {
 	type: ReportingMessageType;
-	message: string;
+	error?: Error;
+	message?: string;
 	source: "webview" | "extension" | "agent";
 	extra?: object;
 }
@@ -236,6 +261,17 @@ export interface TelemetryRequest {
 	properties?: { [key: string]: string | number | boolean };
 }
 
+export interface TelemetrySetAnonymousIdRequest {
+	anonymousId: string;
+}
+
+export const TelemetrySetAnonymousIdRequestType = new RequestType<
+	TelemetrySetAnonymousIdRequest,
+	void,
+	void,
+	void
+>("codestream/telemetry/setAnonymousId");
+
 export const TelemetryRequestType = new RequestType<TelemetryRequest, void, void, void>(
 	"codestream/telemetry"
 );
@@ -247,6 +283,22 @@ export interface AgentOpenUrlRequest {
 export const AgentOpenUrlRequestType = new RequestType<AgentOpenUrlRequest, void, void, void>(
 	"codestream/url/open"
 );
+
+export interface AgentFileSearchRequest {
+	basePath: string;
+	path: string;
+}
+
+export interface AgentFileSearchResponse {
+	files: string[];
+}
+
+export const AgentFileSearchRequestType = new RequestType<
+	AgentFileSearchRequest,
+	AgentFileSearchResponse,
+	void,
+	void
+>("codestream/files/search");
 
 export interface UIStateRequest {
 	context?: {
@@ -261,6 +313,7 @@ export const UIStateRequestType = new RequestType<UIStateRequest, void, void, vo
 export interface SetServerUrlRequest {
 	serverUrl: string;
 	disableStrictSSL?: boolean;
+	environment?: string;
 }
 
 export const SetServerUrlRequestType = new RequestType<SetServerUrlRequest, void, void, void>(
@@ -308,6 +361,22 @@ export const UploadFileRequestType = new RequestType<
 	void,
 	void
 >("codestream/upload/file");
+
+export interface CreateForeignCompanyRequest {
+	request: CreateCompanyRequest;
+	host: EnvironmentHost;
+}
+
+export interface CreateForeignCompanyResponse extends CreateCompanyResponse {
+	accessToken: string;
+}
+
+export const CreateForeignCompanyRequestType = new RequestType<
+	CreateForeignCompanyRequest,
+	CreateForeignCompanyResponse,
+	void,
+	void
+>("codestream/company/createForeign");
 
 export const CodeStreamApiGetRequestType = new RequestType<any, any, void, void>(
 	"codestream/api/get"

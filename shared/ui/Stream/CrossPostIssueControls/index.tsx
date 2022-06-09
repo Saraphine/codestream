@@ -1,29 +1,29 @@
+import { ThirdPartyProviderConfig, ThirdPartyProviders } from "@codestream/protocols/agent";
+import { CSMe, CSTeamSettings } from "@codestream/protocols/api";
+import { CodeStreamState } from "@codestream/webview/store";
+import { updateForProvider } from "@codestream/webview/store/activeIntegrations/actions";
+import { getConnectedProviderNames } from "@codestream/webview/store/providers/reducer";
+import { getUserProviderInfo } from "@codestream/webview/store/providers/utils";
 import React from "react";
 import { connect } from "react-redux";
-import { connectProvider, getUserProviderInfo } from "../../store/providers/actions";
 import { openPanel, setIssueProvider } from "../../store/context/actions";
+import { configureAndConnectProvider } from "../../store/providers/actions";
 import Icon from "../Icon";
 import Menu from "../Menu";
+import { PrePRProviderInfoModal, PrePRProviderInfoModalProps } from "../PrePRProviderInfoModal";
 import { AsanaCardControls } from "./AsanaCardControls";
+import { AzureDevOpsCardControls } from "./AzureDevOpsCardControls";
 import { BitbucketCardControls } from "./BitbucketCardControls";
+import { CodeStreamIssueControls } from "./CodeStreamIssueControls";
 import { GitHubCardControls } from "./GitHubCardControls";
 import { GitLabCardControls } from "./GitLabCardControls";
 import { JiraCardControls } from "./JiraCardControls";
+import { LinearCardControls } from "./LinearCardControls";
+import { ShortcutCardControls } from "./ShortcutCardControls";
 import { SlackCardControls } from "./SlackCardControls";
 import { TrelloCardControls } from "./TrelloCardControls";
+import { PROVIDER_MAPPINGS, ProviderDisplay } from "./types";
 import { YouTrackCardControls } from "./YouTrackCardControls";
-import { AzureDevOpsCardControls } from "./AzureDevOpsCardControls";
-import { ClubhouseCardControls } from "./ClubhouseCardControls";
-import { LinearCardControls } from "./LinearCardControls";
-import { ProviderDisplay, PROVIDER_MAPPINGS } from "./types";
-import { ThirdPartyProviderConfig, ThirdPartyProviders } from "@codestream/protocols/agent";
-import { CSMe } from "@codestream/protocols/api";
-import { PrePRProviderInfoModalProps, PrePRProviderInfoModal } from "../PrePRProviderInfoModal";
-import { CodeStreamState } from "@codestream/webview/store";
-import { getConnectedProviderNames } from "@codestream/webview/store/providers/reducer";
-import { updateForProvider } from "@codestream/webview/store/activeIntegrations/actions";
-import { CodeStreamIssueControls } from "./CodeStreamIssueControls";
-import { CSTeamSettings } from "@codestream/protocols/api";
 
 interface ProviderInfo {
 	provider: ThirdPartyProviderConfig;
@@ -41,10 +41,14 @@ interface ConnectedProps {
 }
 
 interface Props extends ConnectedProps {
-	connectProvider(...args: Parameters<typeof connectProvider>): any;
+	configureAndConnectProvider(...args: Parameters<typeof configureAndConnectProvider>): any;
+
 	updateForProvider(...args: Parameters<typeof updateForProvider>): any;
+
 	setIssueProvider(providerId?: string): void;
+
 	openPanel(...args: Parameters<typeof openPanel>): void;
+
 	isEditing?: boolean;
 }
 
@@ -192,11 +196,11 @@ class CrossPostIssueControls extends React.Component<Props, State> {
 				);
 			}
 
-			case "clubhouse": {
+			case "shortcut": {
 				return (
-					<ClubhouseCardControls provider={providerInfo.provider}>
+					<ShortcutCardControls provider={providerInfo.provider}>
 						{providerOptions}
-					</ClubhouseCardControls>
+					</ShortcutCardControls>
 				);
 			}
 
@@ -312,58 +316,72 @@ class CrossPostIssueControls extends React.Component<Props, State> {
 	};
 
 	async onChangeProvider(providerInfo: ProviderInfo) {
-		if (
-			(providerInfo.provider.needsConfigure ||
-				(providerInfo.provider.needsConfigureForOnPrem && this.props.isOnPrem)) &&
-			!this.providerIsConnected(providerInfo.provider.id)
-		) {
-			const { name, id } = providerInfo.provider;
-			this.props.openPanel(`configure-provider-${name}-${id}-Compose Modal`);
-		} else if (
-			providerInfo.provider.forEnterprise &&
-			!this.providerIsConnected(providerInfo.provider.id)
-		) {
-			const { name, id } = providerInfo.provider;
-			/* if (name === "github_enterprise") {
-				this.setState({
-					propsForPrePRProviderInfoModal: {
-						providerName: name,
-						onClose: () => this.setState({ propsForPrePRProviderInfoModal: undefined }),
-						action: () => this.props.openPanel(`configure-enterprise-${name}-${id}`)
-					}
-				});
-			} else */ this.props.openPanel(
-				`configure-enterprise-${name}-${id}-Compose Modal`
-			);
+		if (!this.providerIsConnected(providerInfo.provider.id)) {
+			this.setState({ isLoading: true, loadingProvider: providerInfo });
+			this.props.configureAndConnectProvider(providerInfo.provider.id, "Compose Modal");
 		} else {
-			const { name } = providerInfo.provider;
-			const { connectedProviderNames, issueProviderConfig } = this.props;
-			const newValueIsNotCurrentProvider =
-				issueProviderConfig == undefined || issueProviderConfig.name !== name;
-			const newValueIsNotAlreadyConnected = !connectedProviderNames.includes(name);
-			if (
-				newValueIsNotCurrentProvider &&
-				newValueIsNotAlreadyConnected &&
-				(name === "github" || name === "bitbucket" || name === "gitlab")
-			) {
-				this.setState({
-					propsForPrePRProviderInfoModal: {
-						providerName: name,
-						onClose: () => {
-							this.setState({ propsForPrePRProviderInfoModal: undefined });
-						},
-						action: () => {
-							this.setState({ isLoading: true, loadingProvider: providerInfo });
-							this.props.connectProvider(providerInfo.provider.id, "Compose Modal");
-						}
-					}
-				});
-			} else {
-				this.setState({ isLoading: true, loadingProvider: providerInfo });
-				const ret = await this.props.connectProvider(providerInfo.provider.id, "Compose Modal");
-				if (ret && ret.alreadyConnected) this.setState({ isLoading: false });
-			}
+			this.props.setIssueProvider(providerInfo.provider.id);
 		}
+
+		/*
+        // Per https://newrelic.atlassian.net/browse/CDSTRM-1591, the need for the "pre-PR" modal
+        // is discontinued ... if we bring it back, suggest we figure out a way not to repeat the
+        // logic below across all our launch integration points - Colin
+
+        if (
+            (providerInfo.provider.needsConfigure ||
+                (providerInfo.provider.needsConfigureForOnPrem && this.props.isOnPrem)) &&
+            !this.providerIsConnected(providerInfo.provider.id)
+        ) {
+            const { name, id } = providerInfo.provider;
+            this.props.openPanel(`configure-provider-${name}-${id}-Compose Modal`);
+        } else if (
+            providerInfo.provider.forEnterprise &&
+            !this.providerIsConnected(providerInfo.provider.id)
+        ) {
+            const { name, id } = providerInfo.provider;
+            // if (name === "github_enterprise") {
+            //	this.setState({
+            //		propsForPrePRProviderInfoModal: {
+            //			providerName: name,
+            //			onClose: () => this.setState({ propsForPrePRProviderInfoModal: undefined }),
+            //			action: () => this.props.openPanel(`configure-enterprise-${name}-${id}`)
+            //		}
+            //	});
+            //} else
+             this.props.openPanel(
+                `configure-enterprise-${name}-${id}-Compose Modal`
+            );
+        } else {
+            const { name } = providerInfo.provider;
+            const { connectedProviderNames, issueProviderConfig } = this.props;
+            const newValueIsNotCurrentProvider =
+                issueProviderConfig == undefined || issueProviderConfig.name !== name;
+            const newValueIsNotAlreadyConnected = !connectedProviderNames.includes(name);
+            if (
+                newValueIsNotCurrentProvider &&
+                newValueIsNotAlreadyConnected &&
+                (name === "github" || name === "bitbucket" || name === "gitlab")
+            ) {
+                this.setState({
+                    propsForPrePRProviderInfoModal: {
+                        providerName: name,
+                        onClose: () => {
+                            this.setState({ propsForPrePRProviderInfoModal: undefined });
+                        },
+                        action: () => {
+                            this.setState({ isLoading: true, loadingProvider: providerInfo });
+                            this.props.connectProvider(providerInfo.provider.id, "Compose Modal");
+                        }
+                    }
+                });
+            } else {
+                this.setState({ isLoading: true, loadingProvider: providerInfo });
+                const ret = await this.props.connectProvider(providerInfo.provider.id, "Compose Modal");
+                if (ret && ret.alreadyConnected) this.setState({ isLoading: false });
+            }
+        }
+        */
 	}
 
 	getProviderInfo(providerId: string): ProviderInfo | undefined {
@@ -420,7 +438,7 @@ const mapStateToProps = (state: CodeStreamState): ConnectedProps => {
 };
 
 export default connect(mapStateToProps, {
-	connectProvider,
+	configureAndConnectProvider,
 	setIssueProvider,
 	openPanel,
 	updateForProvider

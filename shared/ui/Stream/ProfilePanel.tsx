@@ -7,22 +7,20 @@ import { CodeStreamState } from "../store";
 import { useDidMount } from "../utilities/hooks";
 import { HostApi } from "../webview-api";
 import { PanelHeader } from "../src/components/PanelHeader";
-import { openPanel, closePanel, openModal, closeModal } from "./actions";
+import { openModal, closeModal, setUserPreference } from "./actions";
 import Icon from "./Icon";
 import { Headshot } from "../src/components/Headshot";
 import { MetaLabel } from "./Codemark/BaseCodemark";
-import { WebviewPanels, WebviewModals } from "../ipc/webview.protocol.common";
+import { WebviewModals } from "../ipc/webview.protocol.common";
 import Timestamp from "./Timestamp";
-import { getCodeCollisions } from "../store/users/reducer";
-import CancelButton from "./CancelButton";
 import { UserStatus } from "../src/components/UserStatus";
-import { ModifiedRepos } from "./ModifiedRepos";
 import { UpdateUserRequestType, DeleteUserRequestType } from "@codestream/protocols/agent";
 import Menu from "./Menu";
 import { confirmPopup } from "./Confirm";
 import { logout } from "../store/session/actions";
 import { Button } from "../src/components/Button";
 import { Dialog } from "../src/components/Dialog";
+import { isCurrentUserInternal } from "../store/users/reducer";
 
 const Root = styled.div`
 	.edit-headshot {
@@ -102,10 +100,10 @@ export const ProfilePanel = () => {
 		const person = users[context.profileUserId!];
 		const me = users[session.userId!];
 		const team = teams[context.currentTeamId];
-		const xraySetting = team.settings ? team.settings.xray : "";
-		const xrayEnabled = xraySetting !== "off";
 
 		return {
+			isInternalUser: isCurrentUserInternal(state),
+			demoMode: state.preferences.demoMode,
 			person,
 			team,
 			isMe: person ? person.id === session.userId : false,
@@ -113,9 +111,7 @@ export const ProfilePanel = () => {
 			repos: state.repos,
 			teamId: state.context.currentTeamId,
 			currentUserEmail: me.email,
-			currentUserId: me.id,
-			collisions: getCodeCollisions(state),
-			xrayEnabled
+			currentUserId: me.id
 		};
 	});
 
@@ -169,7 +165,7 @@ export const ProfilePanel = () => {
 			confirmPopup({
 				title: "Not Possible",
 				message:
-					"As the only admin on your team, you may not delete your account. Please contact customer service.",
+					"As the only admin in your organization, you may not delete your account. Please contact customer service.",
 				centered: true,
 				buttons: [{ label: "Go Back", className: "control-button" }]
 			});
@@ -204,8 +200,19 @@ export const ProfilePanel = () => {
 			{isMe && <RowIcon name="pencil" title="Edit Name" onClick={editFullName} />}
 		</Row>
 	);
+
+	const toggleDemoMode = () => {
+		dispatch(setUserPreference(["demoMode"], !derivedState.demoMode));
+
+		// When toggling demo mode on, reset preference values that show tours
+		if (derivedState.demoMode) {
+			dispatch(setUserPreference(["hideCodeErrorInstructions"], false));
+			dispatch(setUserPreference(["hideReviewInstructions"], false));
+		}
+	};
+
 	return (
-		<Dialog wide noPadding onClose={() => dispatch(closePanel())}>
+		<Dialog wide noPadding onClose={() => dispatch(closeModal())}>
 			<Root>
 				<PanelHeader title={title} />
 				<div className="channel-list vscroll" style={{ padding: "0 20px 20px 20px" }}>
@@ -270,7 +277,17 @@ export const ProfilePanel = () => {
 					)}
 					{person.lastLogin && (
 						<Row>
-							<MetaLabel>Last Login</MetaLabel>
+							<MetaLabel
+								style={derivedState.isInternalUser ? { cursor: "pointer" } : undefined}
+								title={
+									derivedState.isInternalUser
+										? `Demo Mode: ${derivedState.demoMode ? "ON" : "OFF"}`
+										: ""
+								}
+								onClick={derivedState.isInternalUser ? () => toggleDemoMode() : undefined}
+							>
+								Last Login
+							</MetaLabel>
 							<Value>
 								<Timestamp className="no-padding" time={person.lastLogin} relative />
 							</Value>
@@ -288,8 +305,6 @@ export const ProfilePanel = () => {
 							<StyledUserStatus user={person} />
 						</Row>
 					)}
-					<MetaLabel>Local Modifications</MetaLabel>
-					<ModifiedRepos id={person.id} showModifiedAt />
 					{isMe && (
 						<div style={{ marginTop: "75px" }}>
 							<Button variant="destructive" onClick={cancelAccount}>

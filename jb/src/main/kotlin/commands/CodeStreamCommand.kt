@@ -144,22 +144,9 @@ class CodeStreamCommand : JBProtocolCommand("codestream") {
         val url = "codestream://codestream/$target?" +
             parameters.map { entry -> entry.key + "=" + entry.value }.joinToString("&")
         logger.info("Will open $url in project $basePath")
-        project.codeStream?.show{
-            webViewService?.onDidInitialize {
-                if (sessionService?.userLoggedIn != null) {
-                    logger.info("User already logged in - opening $url in project $basePath")
-                    webViewService?.postNotification(HostNotifications.DidReceiveRequest(url), true)
-                } else {
-                    var posted = false
-                    logger.info("Awaiting login")
-                    sessionService?.onUserLoggedInChanged {
-                        if (it != null && !posted) {
-                            logger.info("User logged in - opening $url in project $basePath")
-                            webViewService?.postNotification(HostNotifications.DidReceiveRequest(url), true)
-                            posted = true
-                        }
-                    }
-                }
+        webViewService?.onDidInitialize {
+            project.codeStream?.show {
+                webViewService?.postNotification(HostNotifications.DidReceiveRequest(url), true)
             }
         }
     }

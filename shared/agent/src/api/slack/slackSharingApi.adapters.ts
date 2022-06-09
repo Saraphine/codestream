@@ -1,6 +1,6 @@
 "use strict";
 import { ActionsBlock, KnownBlock, MessageAttachment } from "@slack/web-api";
-import { CodemarkPlus, ReviewPlus } from "protocol/agent.protocol";
+import { CodeErrorPlus, CodemarkPlus, ReviewPlus } from "protocol/agent.protocol";
 import { SessionContainer } from "../../container";
 import { Logger } from "../../logger";
 import {
@@ -19,6 +19,8 @@ import { providerDisplayNamesByNameKey } from "../../providers/provider";
 import {
 	Marker,
 	toActionId,
+	toCodeErrorActionId,
+	toCodeErrorReplyActionId,
 	toExternalActionId,
 	toReplyActionId,
 	toReplyDisabledActionId,
@@ -564,6 +566,7 @@ export function fromSlackUser(user: any, teamId: string): CSUser {
 		teamIds: [teamId],
 		timeZone: user.tz,
 		// TODO: ???
+		totalCodeErrors: 0,
 		totalPosts: 0,
 		totalReviews: 0,
 		numUsersInvited: 0,
@@ -1112,6 +1115,110 @@ export function toSlackReviewPostBlocks(
 		type: "context",
 		// MUST keep this data in sync with codemarkAttachmentRegex above
 		block_id: `codestream://review/${review.id}?teamId=${review.teamId}`,
+		elements: [
+			{
+				type: "plain_text",
+				text: "Posted via CodeStream"
+			}
+		]
+	});
+
+	return blocks;
+}
+
+export function toSlackCodeErrorPostBlocks(
+	codeError: CodeErrorPlus,
+	userMaps: UserMaps,
+	repos?: { [key: string]: CSRepository } | undefined,
+	slackUserId?: string
+): Blocks {
+	const blocks: Blocks = [];
+	const creator = userMaps.codeStreamUsersByUserId.get(codeError.creatorId);
+	let creatorName = "Someone ";
+	if (creator && creator.username) {
+		creatorName = `${creator.username} `;
+	}
+	blocks.push({
+		type: "context",
+		elements: [
+			{
+				type: "mrkdwn",
+				text: `${creatorName}is diagnosing an issue`
+			}
+		]
+	});
+
+	if (codeError.title) {
+		blocks.push({
+			type: "section",
+			text: {
+				type: "mrkdwn",
+				text: toSlackText(codeError.title, userMaps)
+			}
+		});
+	}
+
+	if (codeError.stackTraces && codeError.stackTraces[0]) {
+		// 9 = ```*2 + ...
+		const stackTrace = codeError.stackTraces[0].text || (codeError as any).stackTrace || "";
+		const contentLength = stackTrace.length + 9;
+		const isTruncated = contentLength > slackBlockTextCodeMax;
+		blocks.push({
+			type: "section",
+			text: {
+				type: "mrkdwn",
+				text: `\`\`\`${stackTrace.substring(0, slackBlockTextCodeMax - 9)}${
+					isTruncated ? "..." : ""
+				}\`\`\``
+			}
+		});
+
+		if (isTruncated) {
+			blocks.push(blockTruncated());
+		}
+	}
+
+	let counter = 0;
+	let actionId = toCodeErrorReplyActionId(counter, codeError, slackUserId);
+	const actions: ActionsBlock = {
+		type: "actions",
+		block_id: "codeerror_actions",
+		elements: [
+			{
+				type: "button",
+				action_id: actionId,
+				style: "primary",
+				text: {
+					type: "plain_text",
+					text: "View Discussion & Reply"
+				}
+			}
+		]
+	};
+
+	const permalink = codeError.permalink;
+	if (permalink) {
+		counter++;
+		actionId = toCodeErrorActionId(counter, "ide", codeError);
+		actions.elements.push({
+			type: "button",
+			action_id: actionId,
+			text: {
+				type: "plain_text",
+				text: "Open in IDE"
+			},
+			url: `${permalink}?ide=default&src=${encodeURIComponent(
+				providerDisplayNamesByNameKey.get("slack") || ""
+			)}`
+		});
+
+		blocks.push(actions);
+	}
+
+	blocks.push({
+		type: "context",
+		// MUST keep this data in sync with codemarkAttachmentRegex above
+		block_id: `codestream://review/${codeError.id}?teamId=${codeError.teamId}`,
 		elements: [
 			{
 				type: "plain_text",

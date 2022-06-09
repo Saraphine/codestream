@@ -1,10 +1,12 @@
 "use strict";
 import { CodeStreamAgent } from "agent";
-import { RepositoryLocator } from "./git/repositoryLocator";
 import { DocumentManager } from "./documentManager";
 import { ErrorReporter } from "./errorReporter";
 import { GitService } from "./git/gitService";
+import { GitServiceLite } from "./git/gitServiceLite";
+import { RepositoryLocator } from "./git/repositoryLocator";
 import { Logger } from "./logger";
+import { CodeErrorsManager } from "./managers/codeErrorsManager";
 import { CodemarksManager } from "./managers/codemarksManager";
 import { CompaniesManager } from "./managers/companiesManager";
 import { DocumentMarkerManager } from "./managers/documentMarkerManager";
@@ -12,7 +14,10 @@ import { FilesManager } from "./managers/filesManager";
 import { IgnoreFilesManager } from "./managers/ignoreFilesManager";
 import { MarkerLocationManager } from "./managers/markerLocationManager";
 import { MarkersManager } from "./managers/markersManager";
+import { NRManager } from "./managers/NRManager";
+import { PixieManager } from "./managers/pixieManager";
 import { PostsManager } from "./managers/postsManager";
+import { RepoIdentificationManager } from "./managers/repoIdentificationManager";
 import { RepositoryMappingManager } from "./managers/repositoryMappingManager";
 import { ReposManager } from "./managers/reposManager";
 import { ReviewsManager } from "./managers/reviewsManager";
@@ -27,9 +32,10 @@ import { UrlManager } from "./managers/urlManager";
 import { UsersManager } from "./managers/usersManager";
 import { ThirdPartyProviderRegistry } from "./providers/registry";
 import { CodeStreamSession } from "./session";
-import { GitServiceLite } from "./git/gitServiceLite";
 
-class SessionServiceContainer {
+let providerRegistry: ThirdPartyProviderRegistry | undefined = undefined;
+
+export class SessionServiceContainer {
 	private readonly _git: GitService;
 	get git() {
 		return this._git;
@@ -120,6 +126,26 @@ class SessionServiceContainer {
 		return this._reviews;
 	}
 
+	private readonly _codeErrors: CodeErrorsManager;
+	get codeErrors() {
+		return this._codeErrors;
+	}
+
+	private readonly _nr: NRManager;
+	get nr() {
+		return this._nr;
+	}
+
+	private readonly _pixie: PixieManager;
+	get pixie() {
+		return this._pixie;
+	}
+
+	private readonly _repoIdentifier: RepoIdentificationManager;
+	get repoIdentifier() {
+		return this._repoIdentifier;
+	}
+
 	constructor(public readonly session: CodeStreamSession) {
 		const cinstance = Container.instance();
 		this._git = new GitService(session, cinstance.repositoryLocator, cinstance.gitServiceLite);
@@ -134,12 +160,16 @@ class SessionServiceContainer {
 		this._teams = new TeamsManager(session);
 		this._users = new UsersManager(session);
 		this._documentMarkers = new DocumentMarkerManager(session);
-		this._providerRegistry = new ThirdPartyProviderRegistry(session);
+		this._providerRegistry = providerRegistry!.initialize(session);
 		this._repositoryMappings = new RepositoryMappingManager(session);
 		this._companies = new CompaniesManager(session);
 		this._ignoreFiles = new IgnoreFilesManager(session);
 		this._textFiles = new TextFilesManager(session);
 		this._reviews = new ReviewsManager(session);
+		this._codeErrors = new CodeErrorsManager(session);
+		this._nr = new NRManager(session);
+		this._repoIdentifier = new RepoIdentificationManager(session);
+		this._pixie = new PixieManager(session);
 	}
 }
 
@@ -154,6 +184,7 @@ class ServiceContainer {
 		this._errorReporter = new ErrorReporter(session);
 		this._telemetry = new TelemetryManager(session);
 		this._urls = new UrlManager();
+		providerRegistry = new ThirdPartyProviderRegistry();
 	}
 
 	private readonly _gitServiceLite: GitServiceLite;

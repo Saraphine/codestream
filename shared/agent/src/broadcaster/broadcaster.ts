@@ -22,6 +22,8 @@ export interface BroadcasterConnection {
 export interface BroadcasterHistoryInput {
 	channels: string[];
 	since: number;
+	reason?: string;
+	cla?: number;
 	debug?(msg: string, info?: any): void; // for debug messages
 }
 
@@ -38,6 +40,14 @@ export interface BroadcasterHistoryOutput {
 
 export type MessageCallback = (message: any) => void;
 export type StatusCallback = (status: BroadcasterStatus) => void;
+export interface HistoryFetchInfo {
+	channels: string;
+	before: string;
+	after: string;
+	reason?: string;
+	cla?: number;
+}
+export type HistoryFetchCallback = (info: HistoryFetchInfo) => void;
 
 // use this interface to initialize the Broadcaster class
 export interface BroadcasterInitializer {
@@ -87,6 +97,7 @@ export enum BroadcasterStatusType {
 	Reset = "Reset", // indicates that during catching up on history, there are too many messages or it's been too long...
 	// the client should retrieve fresh data from the server as if it is a fresh login
 	Aborted = "Aborted", // an aborted state, usually the result of a bad broadcaster token, client must reinitialize
+	NonCriticalFailure = "NonCriticalFailure", // a failure of non-critical channels, client should log and drop
 
 	// the statuses below are used only for testing, normally these are private and black-boxed
 	Confirmed = "Confirmed", // indicates subscriptions have been confirmed
@@ -107,6 +118,8 @@ const ONE_MONTH = 30 * 24 * 60 * 60 * 1000;
 const TEN_MINUTES = 10 * 60 * 1000;
 const THRESHOLD_FOR_CATCHUP = ONE_MONTH - TEN_MINUTES;
 const THRESHOLD_BUFFER = 12000;
+const MAX_HISTORY_FETCHES_PER_MINUTE = 10;
+const MAX_HISTORY_FETCHES_PER_HOUR = 100;
 
 export class Broadcaster {
 	private _broadcasterConnection: BroadcasterConnection | undefined;
@@ -133,6 +146,8 @@ export class Broadcaster {
 	private _messagesReceived: { [key: string]: number } = {};
 	private _initializationStartedAt: number = 0;
 	private _partialMessages: { [fullMessageId: string]: PartialMessage[] } = {};
+	private _connectionLostAt: number | undefined;
+	private _historyFetches: number[] = [];
 
 	// call to receive status updates
 	get onDidStatusChange(): Event<BroadcasterStatus> {
@@ -180,6 +195,7 @@ export class Broadcaster {
 				httpsAgent: this._httpsAgent,
 				onMessage: this.onMessage.bind(this),
 				onStatus: this.onStatus.bind(this),
+				onFetchHistory: this.onFetchHistory.bind(this),
 				debug: this._debug
 			});
 			this._broadcasterConnection = pubnubConnection;
@@ -364,12 +380,20 @@ export class Broadcaster {
 			case BroadcasterStatusType.Failed:
 				return this.subscriptionFailure(status.channels!);
 
+			case BroadcasterStatusType.NonCriticalFailure:
+				this.emitStatus(BroadcasterStatusType.NonCriticalFailure, status.channels);
+				return;
+
 			case BroadcasterStatusType.Reset:
 				return this.reset();
 
 			default:
 				this._statusEmitter.fire(status);
 		}
+	}
+
+	onFetchHistory(info: HistoryFetchInfo): void {
+		this._api.announceHistoryFetch(info);
 	}
 
 	// for testing purposes, simulate a network error
@@ -470,24 +494,67 @@ export class Broadcaster {
 
 	// catch up on missed history for all subscribed channels
 	private async catchUp() {
+		const now = Date.now();
 		const channels = this.getSubscribedChannels();
 		if (channels.length === 0) {
 			this._debug("No channels to catch up with");
 			this.subscribed();
 			return;
 		}
+		if (this._connectionLostAt && Date.now() - this._connectionLostAt < 60000) {
+			delete this._connectionLostAt;
+			this._debug("Connection was lost less than 60 seconds ago, not doing history catch up");
+			this.subscribed();
+			return;
+		}
+
+		// rate limit our history fetches, since we pay for them
+		const historyFetchesInLastMinute = this._historyFetches.filter(timestamp => {
+			return timestamp >= now - 60 * 1000;
+		});
+		if (historyFetchesInLastMinute.length > MAX_HISTORY_FETCHES_PER_MINUTE) {
+			this._debug("Limit on history fetches per minute was reached, forcing reset");
+			this._api.announceHistoryFetch({
+				channels: "",
+				before: "",
+				after: "",
+				reason: "minute_limit"
+			});
+			return this.reset();
+		}
+		const historyFetchesInLastHour = this._historyFetches.filter(timestamp => {
+			return timestamp >= now - 60 * 60 * 1000;
+		});
+		if (historyFetchesInLastHour.length > MAX_HISTORY_FETCHES_PER_HOUR) {
+			this._debug("Limit on history fetches per hour was reached, forcing reset");
+			this._api.announceHistoryFetch({
+				channels: "",
+				before: "",
+				after: "",
+				reason: "hour_limit"
+			});
+			return this.reset();
+		}
+		this._historyFetches = historyFetchesInLastHour;
+		this._historyFetches.push(now);
 
 		// catch up since the last message received, or, if we are caught in a loop
 		// of trying to catch up already, continue to catch up from that point
 		let since = 0;
+		let missed = 0;
+		let reason;
 		if (this._lastMessageReceivedAt > 0) {
 			since = this._lastMessageReceivedAt - THRESHOLD_BUFFER;
+			missed = now - since;
+			reason = `missed_${missed}`;
 			this._debug(`Last message was recevied at ${this._lastMessageReceivedAt}`);
 		} else {
 			// on a fresh session, since initialization may take some time (especially if there are connection issues),
 			// we want to make sure we get messages received in that time, in fact we'll be generous and pick up
 			// any messages issued since ten seconds before initialization
 			since = this._initializationStartedAt - 10000;
+			missed = now - since;
+			reason = `init_${missed}`;
 			this._debug(
 				`No messages have been received yet, looks like fresh session, retrieve history since ${since}`
 			);
@@ -500,7 +567,7 @@ export class Broadcaster {
 			*/
 		}
 
-		if (Date.now() - since > THRESHOLD_FOR_CATCHUP) {
+		if (missed > THRESHOLD_FOR_CATCHUP) {
 			// if it's been too long, we don't want to process a whole ton of messages,
 			// and in any case we only retain messages for one month ... so better to
 			// force the client to initiate a fresh session
@@ -515,7 +582,9 @@ export class Broadcaster {
 			historyOutput = await this._broadcasterConnection!.fetchHistory({
 				channels,
 				since,
-				debug: this._debug
+				debug: this._debug,
+				reason,
+				cla: this._connectionLostAt
 			});
 		} catch (error) {
 			// this is bad ... if we can't catch up on history, we'll start
@@ -593,6 +662,7 @@ export class Broadcaster {
 		if (troubleChannels === false) {
 			// means all channels are in doubt
 			troubleChannels = [...channels];
+			// @ts-ignore
 		} else if (troubleChannels == true) {
 			// means confirmation is assumed
 			troubleChannels = [] as string[];
@@ -601,7 +671,8 @@ export class Broadcaster {
 			// let the client know we're experiencing difficulty, and attempt to resubscribe to
 			// the channels in question
 			this._debug("Failed to confirm all subscriptions, resubscribing...");
-			this.emitTrouble(troubleChannels);
+			this._connectionLostAt = Date.now();
+			// this.emitTrouble(troubleChannels);
 			this.resubscribe(troubleChannels);
 		} else {
 			if (this._testMode) {

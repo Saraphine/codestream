@@ -22,6 +22,7 @@ const messageToType: {
 		| MessageType.Posts
 		| MessageType.Repositories
 		| MessageType.Reviews
+		| MessageType.CodeErrors
 		| MessageType.Streams
 		| MessageType.Teams
 		| MessageType.Users
@@ -30,6 +31,8 @@ const messageToType: {
 } = {
 	codemark: MessageType.Codemarks,
 	codemarks: MessageType.Codemarks,
+	codeError: MessageType.CodeErrors,
+	codeErrors: MessageType.CodeErrors,
 	company: MessageType.Companies,
 	companies: MessageType.Companies,
 	marker: MessageType.Markers,
@@ -74,6 +77,7 @@ export class BroadcasterEvents implements Disposable {
 	private _disposable: Disposable | undefined;
 	private readonly _broadcaster: Broadcaster;
 	private _subscribedStreamIds = new Set<string>();
+	private _subscribedObjectIds = new Set<string>();
 
 	constructor(private readonly _options: BroadcasterEventsInitializer) {
 		this._broadcaster = new Broadcaster(this._options.api, this._options.httpsAgent);
@@ -124,6 +128,7 @@ export class BroadcasterEvents implements Disposable {
 		this._disposable = undefined;
 	}
 
+	/*
 	@log()
 	subscribeToStream(streamId: string) {
 		if (!this._subscribedStreamIds.has(streamId)) {
@@ -131,12 +136,31 @@ export class BroadcasterEvents implements Disposable {
 			this._subscribedStreamIds.add(streamId);
 		}
 	}
+	*/
+
+	/*
+	@log()
+	subscribeToObject(objectId: string) {
+		if (!this._subscribedObjectIds.has(objectId)) {
+			this._broadcaster.subscribe([`object-${objectId}`]);
+			this._subscribedObjectIds.add(objectId);
+		}
+	}
+	*/
 
 	@log()
 	unsubscribeFromStream(streamId: string) {
 		if (this._subscribedStreamIds.has(streamId)) {
 			this._broadcaster.unsubscribe([`stream-${streamId}`]);
 			this._subscribedStreamIds.delete(streamId);
+		}
+	}
+
+	@log()
+	unsubscribeFromObject(objectId: string) {
+		if (this._subscribedObjectIds.has(objectId)) {
+			this._broadcaster.unsubscribe([`object-${objectId}`]);
+			this._subscribedStreamIds.delete(objectId);
 		}
 	}
 
@@ -178,6 +202,11 @@ export class BroadcasterEvents implements Disposable {
 				// TODO: let the extension know we have trouble?
 				// the indicated channels have not been subscribed to, what do we do?
 				break;
+
+			case BroadcasterStatusType.NonCriticalFailure:
+				Logger.warn(`Non-critical subscriptions failed, giving up: ${e.channels}`);
+				this._broadcaster.unsubscribe(e.channels || []);
+				break;
 		}
 	}
 
@@ -189,6 +218,25 @@ export class BroadcasterEvents implements Disposable {
 
 	private fireMessage(message: { [key: string]: any }) {
 		const { requestId, messageId, ...messages } = message;
+
+		// process streams before anything else, because a new stream and a new post in it
+		// can be received at the same time, and we need the stream to be resolved first for
+		// unreads to be handled correctly
+		if (messages.streams || messages.stream) {
+			const streams = message.streams || [];
+			if (messages.stream) {
+				streams.push(messages.stream);
+			}
+			const data = CodeStreamApiProvider.normalizeResponse<any>(streams);
+			this._onDidReceiveMessage.fire({
+				type: MessageType.Streams,
+				data: Array.isArray(data) ? data : [data],
+				blockUntilProcessed: true
+			});
+			delete messages.streams;
+			delete messages.stream;
+		}
+
 		for (const [dataType, rawData] of Object.entries(messages)) {
 			try {
 				const type = messageToType[dataType];

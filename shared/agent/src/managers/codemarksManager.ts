@@ -1,6 +1,5 @@
 "use strict";
-import { createPatch, ParsedDiff, parsePatch } from "diff";
-import { xfs } from "xfs";
+import { createPatch } from "diff";
 import { MessageType } from "../api/apiProvider";
 import { MarkerLocation } from "../api/extensions";
 import { Container, SessionContainer } from "../container";
@@ -19,6 +18,9 @@ import {
 	FetchCodemarksRequest,
 	FetchCodemarksRequestType,
 	FetchCodemarksResponse,
+	FollowCodeErrorRequest,
+	FollowCodeErrorRequestType,
+	FollowCodeErrorResponse,
 	FollowCodemarkRequest,
 	FollowCodemarkRequestType,
 	FollowCodemarkResponse,
@@ -80,6 +82,12 @@ export class CodemarksManager extends CachedEntityManagerBase<CSCodemark> {
 		const enrichedCodemarks = [];
 		for (const codemark of codemarks) {
 			if (request.streamId != null && request.streamId !== codemark.streamId) {
+				continue;
+			}
+			if (request.streamIds != null && !request.streamIds.includes(codemark.streamId)) {
+				continue;
+			}
+			if (request.codemarkIds != null && !request.codemarkIds.includes(codemark.id)) {
 				continue;
 			}
 
@@ -376,6 +384,11 @@ export class CodemarksManager extends CachedEntityManagerBase<CSCodemark> {
 		return this.session.api.followReview(request);
 	}
 
+	@lspHandler(FollowCodeErrorRequestType)
+	followCodeError(request: FollowCodeErrorRequest): Promise<FollowCodeErrorResponse> {
+		return this.session.api.followCodeError(request);
+	}
+
 	@lspHandler(SetCodemarkStatusRequestType)
 	async setStatus(request: SetCodemarkStatusRequest): Promise<SetCodemarkStatusResponse> {
 		const response = await this.session.api.setCodemarkStatus(request);
@@ -393,15 +406,9 @@ export class CodemarksManager extends CachedEntityManagerBase<CSCodemark> {
 
 	protected async loadCache(): Promise<void> {
 		const response = await this.session.api.fetchCodemarks({});
-
-		if (response.markers) {
-			const { markers } = SessionContainer.instance();
-			for (const marker of response.markers) {
-				markers.cacheSet(marker);
-			}
-		}
-
-		this.cache.reset(response.codemarks);
+		const { codemarks, ...rest } = response;
+		this.cache.reset(codemarks);
+		this.cacheResponse(rest);
 	}
 
 	protected getEntityName(): string {

@@ -49,7 +49,12 @@ import Tooltip from "./Tooltip";
 import { Headshot } from "@codestream/webview/src/components/Headshot";
 import HeadshotMenu from "@codestream/webview/src/components/HeadshotMenu";
 import { SelectPeople } from "@codestream/webview/src/components/SelectPeople";
-import { getTeamMembers, getTeamTagsArray, getTeamMates } from "../store/users/reducer";
+import {
+	getTeamMembers,
+	getTeamTagsArray,
+	getTeamMates,
+	getActiveMemberIds
+} from "../store/users/reducer";
 import MessageInput, { AttachmentField } from "./MessageInput";
 import {
 	openPanel,
@@ -90,7 +95,7 @@ import {
 	setNewPostEntry
 } from "@codestream/webview/store/context/actions";
 import styled from "styled-components";
-import { DropdownButton } from "./Review/DropdownButton";
+import { DropdownButton } from "./DropdownButton";
 import { getTeamSetting } from "../store/teams/reducer";
 import { ChangesetFileList } from "./Review/ChangesetFileList";
 import { Meta, MetaLabel, MetaDescriptionForAssignees } from "./Codemark/BaseCodemark";
@@ -128,7 +133,7 @@ interface ConnectedProps {
 	teamId: string;
 	teamMates: CSUser[];
 	teamMembers: CSUser[];
-	removedMemberIds: string[];
+	activeMemberIds: string[];
 	channel: CSStream;
 	providerInfo: {
 		[service: string]: {};
@@ -543,6 +548,18 @@ class ReviewForm extends React.Component<Props, State> {
 				});
 			}
 
+			if (statusInfo.scm?.remotes?.length === 0) {
+				this.setState({
+					isLoadingScm: false,
+					isReloadingScm: false,
+					scmError: true,
+					scmErrorMessage:
+						"This repository has no remotes.\n" +
+						"Please configure a remote URL for this repository before creating a review."
+				});
+				return;
+			}
+
 			this._disposableDidChangeDataNotification &&
 				this._disposableDidChangeDataNotification.dispose();
 			const self = this;
@@ -651,7 +668,7 @@ class ReviewForm extends React.Component<Props, State> {
 						.filter(
 							email =>
 								!authorsBlameData[email].id ||
-								!this.props.removedMemberIds.includes(authorsBlameData[email].id)
+								this.props.activeMemberIds.includes(authorsBlameData[email].id)
 						)
 						// get the top most impacted authors based on how many times their code
 						// was stomped on, and make those the suggested reviewers, depending
@@ -2014,14 +2031,16 @@ class ReviewForm extends React.Component<Props, State> {
 
 		const repoMenuItems =
 			openRepos && !isAmending
-				? openRepos.map(repo => {
-						const repoName = repo.id && repos[repo.id] && repos[repo.id].name;
-						return {
-							label: repoName || repo.folder.uri,
-							key: repo.id,
-							action: () => this.setRepo(repo)
-						};
-				  })
+				? openRepos
+						.filter(repo => repo.remotes && repo.remotes?.length > 0)
+						.map(repo => {
+							const repoName = repo.id && repos[repo.id] && repos[repo.id].name;
+							return {
+								label: repoName || repo.folder.uri,
+								key: repo.id,
+								action: () => this.setRepo(repo)
+							};
+						})
 				: [];
 
 		let branchError: JSX.Element | null = null;
@@ -2309,7 +2328,7 @@ class ReviewForm extends React.Component<Props, State> {
 										loading={isReloadingScm || this.state.isLoading}
 										onClick={this.handleClickSubmit}
 									>
-										{isAmending ? "Amend" : "Submit"}
+										{isAmending === true ? "Amend" : "Submit"}
 									</Button>
 								</Tooltip>
 							)}
@@ -2376,7 +2395,7 @@ const mapStateToProps = (state: CodeStreamState, props): ConnectedProps => {
 	}
 
 	const team = teams[context.currentTeamId];
-	const removedMemberIds = team.removedMemberIds || [];
+	const activeMemberIds = getActiveMemberIds(team);
 	const blameMap = team.settings ? team.settings.blameMap : {};
 
 	const skipPostCreationModal = preferences ? preferences.skipPostCreationModal : false;
@@ -2413,7 +2432,7 @@ const mapStateToProps = (state: CodeStreamState, props): ConnectedProps => {
 		teamId: team.id,
 		teamMates,
 		teamMembers,
-		removedMemberIds,
+		activeMemberIds,
 		reviewApproval: getTeamSetting(team, "reviewApproval"),
 		reviewAssignment: getTeamSetting(team, "reviewAssignment"),
 		providerInfo: (user.providerInfo && user.providerInfo[context.currentTeamId]) || EMPTY_OBJECT,

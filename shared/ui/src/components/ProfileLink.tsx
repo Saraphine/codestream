@@ -1,26 +1,32 @@
 import React from "react";
 import { connect } from "react-redux";
-import { openPanel, setProfileUser } from "../../store/context/actions";
-import { WebviewPanels } from "@codestream/protocols/webview";
+import { openModal, setProfileUser } from "../../store/context/actions";
+import { WebviewModals } from "@codestream/protocols/webview";
 import styled from "styled-components";
-import { setCurrentCodemark, setCurrentReview } from "../../store/context/actions";
+import {
+	setCurrentCodemark,
+	setCurrentReview,
+	setCurrentCodeError
+} from "../../store/context/actions";
 
 interface Props {
 	id: string;
 	children: React.ReactNode;
 	className?: string;
-	openPanel?: Function;
+	openModal?: Function;
 	setProfileUser?: Function;
 	setCurrentCodemark?: Function;
 	setCurrentReview?: Function;
+	setCurrentCodeError?: Function;
 }
 
 const ProfileLink = styled((props: Props) => {
 	const onClick = () => {
-		props.openPanel && props.openPanel(WebviewPanels.Profile);
+		props.openModal && props.openModal(WebviewModals.Profile);
 		props.setProfileUser && props.setProfileUser(props.id);
 		props.setCurrentCodemark && props.setCurrentCodemark();
 		props.setCurrentReview && props.setCurrentReview();
+		props.setCurrentCodeError && props.setCurrentCodeError();
 	};
 	if (!props.id) return <>props.children</>;
 	return <span {...{ onClickCapture: onClick, className: props.className }}>{props.children}</span>;
@@ -30,10 +36,11 @@ const ProfileLink = styled((props: Props) => {
 
 const mapStateToProps = (state, props: Props) => ({});
 const Component = connect(mapStateToProps, {
-	openPanel,
+	openModal,
 	setProfileUser,
 	setCurrentCodemark,
-	setCurrentReview
+	setCurrentReview,
+	setCurrentCodeError
 })(ProfileLink);
 
 export { Component as ProfileLink };

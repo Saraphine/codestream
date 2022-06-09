@@ -8,15 +8,24 @@ import Menu from "./Menu";
 import { HostApi } from "../webview-api";
 import { OpenUrlRequestType } from "@codestream/protocols/webview";
 import { sortBy as _sortBy } from "lodash-es";
-import { logout, switchToTeam } from "../store/session/actions";
+import { logout, switchToForeignCompany, switchToTeam } from "../store/session/actions";
 import { EMPTY_STATUS } from "./StartWork";
 import { MarkdownText } from "./MarkdownText";
 import { setProfileUser, openModal } from "../store/context/actions";
-import { confirmPopup } from "./Confirm";
-import { UpdateTeamSettingsRequestType } from "@codestream/protocols/agent";
+import { multiStageConfirmPopup } from "./MultiStageConfirm";
+import {
+	DeleteCompanyRequestType,
+	UpdateTeamSettingsRequestType
+} from "@codestream/protocols/agent";
 import { isFeatureEnabled } from "../store/apiVersioning/reducer";
 import { setUserPreference } from "./actions";
-import { AVAILABLE_PANES } from "./Sidebar";
+import { AVAILABLE_PANES, DEFAULT_PANE_SETTINGS } from "./Sidebar";
+import styled from "styled-components";
+
+const RegionSubtext = styled.div`
+	font-size: smaller;
+	margin: 0 0 0 21px;
+`;
 
 interface EllipsisMenuProps {
 	menuTarget: any;
@@ -32,11 +41,20 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 		const team = state.teams[teamId];
 		const user = state.users[state.session.userId!];
 		const onPrem = state.configs.isOnPrem;
+		const currentCompanyId = team.companyId;
+		const { environmentHosts, environment, isProductionCloud } = state.configs;
+		const currentHost = environmentHosts?.find(host => host.shortName === environment);
+		const supportsMultiRegion = isFeatureEnabled(state, "multiRegion");
 
 		return {
 			sidebarPanePreferences: state.preferences.sidebarPanes || EMPTY_HASH,
 			sidebarPaneOrder: state.preferences.sidebarPaneOrder || AVAILABLE_PANES,
-			userTeams: _sortBy(Object.values(state.teams).filter(t => !t.deactivated), "name"),
+			userCompanies: _sortBy(Object.values(state.companies), "name"),
+			userTeams: _sortBy(
+				Object.values(state.teams).filter(t => !t.deactivated),
+				"name"
+			),
+			currentCompanyId,
 			currentTeamId: teamId,
 			serverUrl: state.configs.serverUrl,
 			company: state.companies[team.companyId] || {},
@@ -48,24 +66,54 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 			xraySetting: team.settings ? team.settings.xray : "",
 			multipleReviewersApprove: isFeatureEnabled(state, "multipleReviewersApprove"),
 			autoJoinSupported: isFeatureEnabled(state, "autoJoin"),
-			isOnPrem: onPrem
+			isOnPrem: onPrem,
+			currentHost,
+			hasMultipleEnvironments: environmentHosts && environmentHosts.length > 1,
+			environment,
+			isProductionCloud,
+			supportsMultiRegion
 		};
 	});
 
 	const buildSwitchTeamMenuItem = () => {
-		const { userTeams, currentTeamId } = derivedState;
+		const {
+			userCompanies,
+			currentCompanyId,
+			userTeams,
+			currentHost,
+			hasMultipleEnvironments,
+			supportsMultiRegion
+		} = derivedState;
 
 		const buildSubmenu = () => {
-			const items = userTeams.map(team => {
-				const isCurrentTeam = team.id === currentTeamId;
+			const items = userCompanies.map(company => {
+				const isCurrentCompany = company.id === currentCompanyId;
+				const companyHost = company.host || currentHost;
+				const companyRegion = supportsMultiRegion && hasMultipleEnvironments && companyHost?.name;
+
 				return {
-					key: team.id,
-					label: team.name,
+					key: company.id,
+					label: (
+						<>
+							{company.name}
+							{companyRegion && <RegionSubtext>{companyRegion}</RegionSubtext>}
+						</>
+					),
 					// icon: isCurrentTeam ? <Icon name="check" /> : undefined,
-					checked: isCurrentTeam,
-					noHover: isCurrentTeam,
+					checked: isCurrentCompany,
+					noHover: isCurrentCompany,
 					action: () => {
-						if (!isCurrentTeam) dispatch(switchToTeam(team.id));
+						if (isCurrentCompany) return;
+						if (company.host) {
+							dispatch(switchToForeignCompany(company.id));
+						} else {
+							const team = userTeams.find(_ => _.companyId === company.id);
+							if (team) {
+								dispatch(switchToTeam(team.id));
+							} else {
+								console.error(`Could not switch to a team in ${company.id}`);
+							}
+						}
 					}
 				};
 			}) as any;
@@ -73,11 +121,11 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 			items.push(
 				{ label: "-" },
 				{
-					key: "create-team",
+					key: "create-company",
 					icon: <Icon name="plus" />,
-					label: "Create New Team",
+					label: "Create New Organization",
 					action: () => {
-						dispatch(openModal(WebviewModals.CreateTeam));
+						dispatch(openModal(WebviewModals.CreateCompany));
 					}
 				}
 			);
@@ -86,7 +134,7 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 		};
 
 		return {
-			label: "Switch Team",
+			label: "Switch Organization",
 			submenu: buildSubmenu()
 		};
 	};
@@ -105,13 +153,44 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 		});
 	};
 
-	const deleteTeam = () => {
-		confirmPopup({
-			title: "Delete Team",
-			message:
-				"Team deletion is handled by customer service. Please send an email to support@codestream.com.",
-			centered: false,
-			buttons: [{ label: "OK", className: "control-button" }]
+	const deleteOrganization = () => {
+		const { currentCompanyId } = derivedState;
+
+		multiStageConfirmPopup({
+			centered: true,
+			stages: [
+				{
+					title: "Confirm Deletion",
+					message: "All of your organization’s codemarks and feedback requests will be deleted.",
+					buttons: [
+						{ label: "Cancel", className: "control-button" },
+						{
+							label: "Delete Organization",
+							className: "delete",
+							advance: true
+						}
+					]
+				},
+				{
+					title: "Are you sure?",
+					message:
+						"Your CodeStream organization will be permanently deleted. This cannot be undone.",
+					buttons: [
+						{ label: "Cancel", className: "control-button" },
+						{
+							label: "Delete Organization",
+							className: "delete",
+							wait: true,
+							action: async () => {
+								await HostApi.instance.send(DeleteCompanyRequestType, {
+									companyId: currentCompanyId
+								});
+								dispatch(logout());
+							}
+						}
+					]
+				}
+			]
 		});
 	};
 
@@ -122,9 +201,9 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 		if (adminIds && adminIds.includes(currentUserId!)) {
 			const submenu = [
 				{
-					label: "Change Team Name",
-					key: "change-team-name",
-					action: () => dispatch(openModal(WebviewModals.ChangeTeamName))
+					label: "Change Organization Name",
+					key: "change-company-name",
+					action: () => dispatch(openModal(WebviewModals.ChangeCompanyName))
 				},
 				{ label: "-" },
 				{
@@ -139,43 +218,43 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 					action: () => dispatch(openModal(WebviewModals.ReviewSettings)),
 					disabled: !derivedState.multipleReviewersApprove
 				},
-				{
-					label: "Live View Settings",
-					key: "live-view-settings",
-					submenu: [
-						{
-							label: "Always On",
-							checked: xraySetting === "on",
-							action: () => changeXray("on")
-						},
-						{
-							label: "Always Off",
-							checked: xraySetting === "off",
-							action: () => changeXray("off")
-						},
-						{
-							label: "User Selectable",
-							checked: !xraySetting || xraySetting === "user",
-							action: () => changeXray("user")
-						},
-						{ label: "-", action: () => {} },
-						{
-							label: "What is Live View?",
-							action: () => {
-								HostApi.instance.send(OpenUrlRequestType, {
-									url: "https://docs.codestream.com/userguide/features/myteam-section/"
-								});
-							}
-						}
-					]
-				},
+				// {
+				// 	label: "Live View Settings",
+				// 	key: "live-view-settings",
+				// 	submenu: [
+				// 		{
+				// 			label: "Always On",
+				// 			checked: xraySetting === "on",
+				// 			action: () => changeXray("on")
+				// 		},
+				// 		{
+				// 			label: "Always Off",
+				// 			checked: xraySetting === "off",
+				// 			action: () => changeXray("off")
+				// 		},
+				// 		{
+				// 			label: "User Selectable",
+				// 			checked: !xraySetting || xraySetting === "user",
+				// 			action: () => changeXray("user")
+				// 		},
+				// 		{ label: "-", action: () => {} },
+				// 		{
+				// 			label: "What is Live View?",
+				// 			action: () => {
+				// 				HostApi.instance.send(OpenUrlRequestType, {
+				// 					url: "https://docs.newrelic.com/docs/codestream/how-use-codestream/my-organization/"
+				// 				});
+				// 			}
+				// 		}
+				// 	]
+				// },
 				{ label: "-" },
 				{ label: "Export Data", action: () => go(WebviewPanels.Export) },
 				{ label: "-" },
-				{ label: "Delete Team", action: deleteTeam }
+				{ label: "Delete Organization", action: deleteOrganization }
 			];
 			return {
-				label: "Team Admin",
+				label: "Organization Admin",
 				key: "admin",
 				submenu
 			};
@@ -211,7 +290,7 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 					label: "View Profile",
 					action: () => {
 						dispatch(setProfileUser(derivedState.currentUserId));
-						go(WebviewPanels.Profile);
+						popup(WebviewModals.Profile);
 					}
 				},
 				{ label: "Change Profile Photo", action: () => popup(WebviewModals.ChangeAvatar) },
@@ -225,23 +304,26 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 		{
 			label: "View",
 			action: "view",
-			submenu: derivedState.sidebarPaneOrder.map(id => {
-				const settings = derivedState.sidebarPanePreferences[id] || EMPTY_HASH;
-				return {
-					key: id,
-					label: WebviewPanelNames[id],
-					checked: !settings.removed,
-					action: () => {
-						dispatch(setUserPreference(["sidebarPanes", id, "removed"], !settings.removed));
-						if (!settings.removed) {
-							HostApi.instance.track("Sidebar Adjusted", {
-								Section: id,
-								Adjustment: "Hidden"
-							});
+			submenu: derivedState.sidebarPaneOrder
+				.filter(id => AVAILABLE_PANES.includes(id))
+				.map(id => {
+					const settings =
+						derivedState.sidebarPanePreferences[id] || DEFAULT_PANE_SETTINGS[id] || {};
+					return {
+						key: id,
+						label: WebviewPanelNames[id],
+						checked: !settings.removed,
+						action: () => {
+							dispatch(setUserPreference(["sidebarPanes", id, "removed"], !settings.removed));
+							if (!settings.removed) {
+								HostApi.instance.track("Sidebar Adjusted", {
+									Section: id,
+									Adjustment: "Hidden"
+								});
+							}
 						}
-					}
-				};
-			})
+					};
+				})
 		},
 		{
 			label: "Notifications",
@@ -253,8 +335,15 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 		...[
 			{ label: "-" },
 			{
-				label: <h3>{derivedState.team.name}</h3>,
-				key: "teamheader",
+				label: (
+					<>
+						<h3>{derivedState.company.name}</h3>
+						{derivedState.currentHost && derivedState.hasMultipleEnvironments && (
+							<small>{derivedState.currentHost.name}</small>
+						)}
+					</>
+				),
+				key: "companyHeader",
 				noHover: true,
 				disabled: true
 			},
@@ -281,6 +370,12 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 	menuItems.push(
 		{ label: "Integrations", action: () => dispatch(openPanel(WebviewPanels.Integrations)) },
 		{
+			label: "New Relic Setup",
+			key: "onboard-newrelic",
+			action: () => go(WebviewPanels.OnboardNewRelic)
+		},
+		{ label: "-" },
+		{
 			label: "Feedback",
 			action: () => openUrl("https://github.com/TeamCodeStream/codestream/issues")
 		},
@@ -291,7 +386,7 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 				{
 					label: "Documentation",
 					key: "documentation",
-					action: () => openUrl("https://help.codestream.com")
+					action: () => openUrl("https://docs.newrelic.com/docs/codestream")
 				},
 				{
 					label: "Video Library",
@@ -313,7 +408,7 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 					key: "flow",
 					action: () => dispatch(openPanel(WebviewPanels.Flow))
 				},
-				{ label: "Onboard", key: "onboard", action: () => go(WebviewPanels.Onboard) },
+				// { label: "Onboard", key: "onboard", action: () => go(WebviewPanels.Onboard) },
 				{
 					label: "What's New",
 					key: "whats-new",
@@ -343,11 +438,11 @@ export function EllipsisMenu(props: EllipsisMenuProps) {
 	// menuItems.push({ label: "Sign Out", action: "signout" });
 
 	// menuItems.push({ label: "-" });
-	const text = (
-		<span style={{ fontSize: "smaller" }}>
-			This is CodeStream version {derivedState.pluginVersion}
-		</span>
-	);
+	let versionStatement = `This is CodeStream version ${derivedState.pluginVersion}`;
+	if (!derivedState.isProductionCloud || derivedState.hasMultipleEnvironments) {
+		versionStatement += ` (${derivedState.environment.toLocaleUpperCase()})`;
+	}
+	const text = <span style={{ fontSize: "smaller" }}>{versionStatement}</span>;
 	menuItems.push({ label: text, action: "", noHover: true, disabled: true });
 
 	return (

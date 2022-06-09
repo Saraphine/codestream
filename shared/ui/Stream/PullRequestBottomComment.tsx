@@ -16,7 +16,7 @@ import { ButtonRow } from "../src/components/Dialog";
 import { Button } from "../src/components/Button";
 import { api } from "../store/providerPullRequests/actions";
 import { replaceHtml } from "../utils";
-import { DropdownButton, DropdownButtonItems } from "./Review/DropdownButton";
+import { DropdownButton, DropdownButtonItems } from "./DropdownButton";
 import { CodeStreamState } from "../store";
 import { getPRLabel } from "../store/providers/reducer";
 

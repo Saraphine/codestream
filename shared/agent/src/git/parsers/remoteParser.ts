@@ -28,9 +28,9 @@ SOFTWARE.
 /**
  * Modifications Copyright CodeStream Inc. under the Apache 2.0 License (Apache-2.0)
  */
-import { GitRemote, GitRemoteType } from "../models/remote";
 import * as childProcess from "child_process";
 import { Logger } from "../../logger";
+import { GitRemote, GitRemoteType } from "../models/remote";
 
 const emptyStr = "";
 
@@ -102,6 +102,63 @@ export class GitRemoteParser {
 			// git@github.com:/TeamCodeStream/codestream.git
 			match[9].replace(/^\/+/g, emptyStr).replace(/\.git\/?$/, emptyStr)
 		];
+	}
+	/**
+	 *  Returns the https and ssh variants for a git remote
+	 *
+	 * @static
+	 * @param {string} httpOrSshEndpoint
+	 * @return {*}  {(Promise<
+	 * 		{
+	 * 			type: "ssh" | "https" | string;
+	 * 			value: string;
+	 * 		}[]
+	 * 	>)}
+	 * @memberof GitRemoteParser
+	 */
+	static async getRepoRemoteVariants(
+		httpOrSshEndpoint: string
+	): Promise<
+		{
+			type: "ssh" | "https" | "git";
+			value: string;
+		}[]
+	> {
+		const results: any[] = [];
+		if (!httpOrSshEndpoint) return results;
+
+		httpOrSshEndpoint = httpOrSshEndpoint.replace("ssh://", "");
+
+		let parsed;
+		try {
+			parsed = await GitRemoteParser.parseGitUrl(httpOrSshEndpoint);
+		} catch (ex) {}
+		if (parsed) {
+			if (httpOrSshEndpoint.indexOf("git") === 0) {
+				results.push({ type: "ssh", value: httpOrSshEndpoint });
+				results.push({ type: "ssh", value: `ssh://${httpOrSshEndpoint}` });
+				results.push({ type: "https", value: `https://${parsed[1]}/${parsed[2]}.git` });
+				results.push({ type: "https", value: `https://${parsed[1]}/${parsed[2]}` });
+				// support for github.repositoryUrl context https://docs.github.com/en/actions/learn-github-actions/contexts#github-context
+				results.push({ type: "git", value: `git://${parsed[1]}/${parsed[2]}.git` });
+			} else if (httpOrSshEndpoint.indexOf("http") === 0) {
+				results.push({ type: "https", value: httpOrSshEndpoint });
+				if (httpOrSshEndpoint.indexOf(".git") > -1) {
+					results.push({ type: "https", value: httpOrSshEndpoint.replace(".git", "") });
+				}
+				// support for github.repositoryUrl context https://docs.github.com/en/actions/learn-github-actions/contexts#github-context
+				results.push({ type: "git", value: `git://${parsed[1]}/${parsed[2]}.git` });
+				results.push({ type: "ssh", value: `git@${parsed[1]}:${parsed[2]}.git` });
+				results.push({ type: "ssh", value: `ssh://git@${parsed[1]}/${parsed[2]}.git` });
+			}
+		} else {
+			results.push({
+				type: httpOrSshEndpoint.indexOf("http") === 0 ? "https" : "ssh",
+				value: httpOrSshEndpoint
+			});
+		}
+
+		return results;
 	}
 
 	static async parseGitUrl(url: string): Promise<[string, string, string]> {

@@ -1,5 +1,6 @@
 import { Uri } from "vscode";
 import { CodeStreamDiffUriData } from "@codestream/protocols/agent";
+import { Strings } from "system";
 import { Logger } from "../logger";
 
 export namespace Uris {
@@ -29,5 +30,15 @@ export namespace Uris {
 
 	export function isCodeStreamDiffUri(uri: string) {
 		return uri && uri.indexOf(CodeStreamDiffPrefix) > -1;
+	}
+
+	export function getFileUriAndSha(uri: Uri): { fileUri: Uri; sha?: string } {
+		if (uri.scheme === "codestream-git") {
+			const { path, sha } = Strings.parseGitUrl(uri);
+			const fileUri = Uri.file(path);
+			return { fileUri, sha };
+		} else {
+			return { fileUri: uri };
+		}
 	}
 }

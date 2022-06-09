@@ -5,7 +5,7 @@ import { shallowEqual, useDispatch, useSelector } from "react-redux";
 import * as reviewSelectors from "../store/reviews/reducer";
 import * as userSelectors from "../store/users/reducer";
 import { CodeStreamState } from "../store";
-import { Row } from "./CrossPostIssueControls/IssueDropdown";
+import { Row } from "./CrossPostIssueControls/IssuesPane";
 import Icon from "./Icon";
 import { Headshot } from "../src/components/Headshot";
 import {
@@ -133,7 +133,7 @@ export const OpenReviews = React.memo(function OpenReviews(props: Props) {
 				/>
 			</PaneHeader>
 			{props.paneState !== PaneState.Collapsed && (
-				<PaneBody>
+				<PaneBody key={'openreviews'}>
 					{!bootstrapped && (
 						<Row>
 							<Icon name="sync" className="spin margin-right" />
@@ -143,7 +143,7 @@ export const OpenReviews = React.memo(function OpenReviews(props: Props) {
 					{bootstrapped && totalReviews === 0 && (
 						<NoContent>
 							Lightweight, pre-PR code review. Get quick feedback on any code, even pre-commit.{" "}
-							<Link href="https://docs.codestream.com/userguide/workflow/feedback-requests">
+							<Link href="https://docs.newrelic.com/docs/codestream/how-use-codestream/request-feedback/">
 								Learn more.
 							</Link>
 						</NoContent>

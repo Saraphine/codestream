@@ -12,16 +12,17 @@ import {
 	MarkerNotLocated,
 	CodemarkPlus,
 	DidChangeDataNotificationType,
-	ChangeDataType
+	ChangeDataType,
+	GetReposScmRequestType
 } from "@codestream/protocols/agent";
 import { fetchDocumentMarkers } from "../store/documentMarkers/actions";
+
 import {
 	ScmError,
 	getFileScmError,
 	mapFileScmErrorForTelemetry
 } from "../store/editorContext/reducer";
 import { setCurrentCodemark, openPanel } from "../store/context/actions";
-import { sortBy as _sortBy } from "lodash-es";
 import { setNewPostEntry } from "@codestream/webview/store/context/actions";
 import { setEditorContext } from "../store/editorContext/actions";
 import { CodeStreamState } from "../store";
@@ -75,7 +76,6 @@ interface InheritedProps {
 interface ConnectedProps {
 	currentStreamId?: string;
 	hasPRProvider?: boolean;
-	showPRComments?: boolean;
 	showHidden: boolean;
 	showResolved: boolean;
 	showReviews: boolean;
@@ -90,7 +90,6 @@ interface ConnectedProps {
 	codemarkDomain: CodemarkDomainType;
 	codemarkSortType: CodemarkSortType;
 	teamName: string;
-	repoName: string;
 	repos: ReposState;
 	codemarks: CodemarkPlus[];
 	count: string | number;
@@ -121,6 +120,7 @@ interface State {
 	isLoading: boolean;
 	problem: ScmError | undefined;
 	pendingPRConnection: boolean | undefined;
+	repoName: string | undefined;
 }
 
 export class SimpleCodemarksForFile extends Component<Props, State> {
@@ -140,7 +140,8 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 			showConfiguationModal: false,
 			isLoading: props.documentMarkers ? props.documentMarkers.length === 0 : true,
 			problem: props.scmInfo && getFileScmError(props.scmInfo),
-			pendingPRConnection: false
+			pendingPRConnection: false,
+			repoName: ""
 		};
 
 		this.docMarkersByStartLine = {};
@@ -152,7 +153,7 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 		this.disposables.push(
 			HostApi.instance.on(DidChangeDocumentMarkersNotificationType, ({ textDocument }) => {
 				if (this.props.textEditorUri === textDocument.uri) {
-					this.props.fetchDocumentMarkers(textDocument.uri, !this.props.showPRComments);
+					this.props.fetchDocumentMarkers(textDocument.uri);
 				}
 			}),
 			HostApi.instance.on(NewCodemarkNotificationType, e => {
@@ -167,12 +168,10 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 				}
 			}),
 			HostApi.instance.on(DidChangeDataNotificationType, async (e: any) => {
-				if (
-					e.type === ChangeDataType.Commits && e.data && e.data.type === "change"
-				) {
+				if (e.type === ChangeDataType.Commits && e.data && e.data.type === "change") {
 					this.onFileChanged(false, this.onFileChangedError, true);
 				}
-			}),
+			})
 		);
 
 		this.onFileChanged(true, this.onFileChangedError);
@@ -223,21 +222,49 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 		}
 
 		let scmInfo = this.props.scmInfo;
-		if (!scmInfo ||
+		if (
+			!scmInfo ||
 			(scmInfo.uri !== textEditorUri && codemarkDomain !== CodemarkDomainType.Team) ||
-			checkBranchUpdate
+			checkBranchUpdate ||
+			!this.state.repoName
 		) {
 			this.setState({ isLoading: true });
-			scmInfo = await HostApi.instance.send(GetFileScmInfoRequestType, {
-				uri: textEditorUri
+
+			if (textEditorUri) {
+				scmInfo = await HostApi.instance.send(GetFileScmInfoRequestType, {
+					uri: textEditorUri
+				});
+			}
+
+			const reposResponse = await HostApi.instance.send(GetReposScmRequestType, {
+				inEditorOnly: true
 			});
+
+			const currentRepo = reposResponse.repositories?.find(
+				repo => repo.id === scmInfo?.scm?.repoId
+			);
+
+			let repoName;
+			if (currentRepo?.folder.name) {
+				repoName = currentRepo.folder.name;
+			}
+			//@TODO: currentRepo.folder.name returning is flaky depending on IDE, specifically JB.
+			//		 this ensures we will have the full repo name for the filter, but is a little hacky.
+			if (!repoName && currentRepo?.path) {
+				repoName = currentRepo.path.substring(currentRepo.path.lastIndexOf("/") + 1);
+			}
+
+			this.setState({ repoName });
+
 			setEditorContext({ scmInfo });
 		}
 
-		const scmError = getFileScmError(scmInfo);
-		this.setState({ problem: scmError });
-
-		await this.props.fetchDocumentMarkers(textEditorUri, !this.props.showPRComments);
+		let scmError;
+		if (scmInfo) {
+			scmError = getFileScmError(scmInfo);
+			this.setState({ problem: scmError });
+		}
+		await this.props.fetchDocumentMarkers(textEditorUri);
 		this.setState(state => (state.isLoading ? { isLoading: false } : null));
 		if (scmError && renderErrorCallback !== undefined) {
 			renderErrorCallback(mapFileScmErrorForTelemetry(scmError));
@@ -258,8 +285,10 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 			return (
 				<NoContent>
 					<p>
-						Open a source file to to start discussing code with your teammates{" "}
-						<a href="https://docs.codestream.com/userguide/workflow/discuss-code/">Learn more.</a>
+						Open a source file to start discussing code with your teammates{" "}
+						<a href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
+							Learn more.
+						</a>
 					</p>
 				</NoContent>
 			);
@@ -310,8 +339,8 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 
 			return (
 				<NoContent>
-					Discuss code by selecting a range and clicking an icon.{" "}
-					<Link href="https://docs.codestream.com/userguide/workflow/discuss-code/">
+					Discuss code by selecting a range, and optionally share to Slack or Teams.{" "}
+					<Link href="https://docs.newrelic.com/docs/codestream/how-use-codestream/discuss-code/">
 						Learn more.
 					</Link>
 				</NoContent>
@@ -490,10 +519,7 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 					this.renderedCodemarks[codemark.id] = true;
 				}
 
-				const hidden =
-					(!showHidden && codemark && !codemark.pinned) ||
-					(docMarker.externalContent && !this.props.showPRComments);
-				// if (hidden) return null;
+				const hidden = !showHidden && codemark && !codemark.pinned;
 
 				return (
 					<Codemark
@@ -523,7 +549,6 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 			showHidden,
 			showResolved,
 			showReviews,
-			showPRComments,
 			wrapComments,
 			hideTags,
 			codemarkSortType
@@ -555,7 +580,7 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 				: codemarkDomain === CodemarkDomainType.Branch
 				? this.props.currentBranch || "[branch]"
 				: codemarkDomain === CodemarkDomainType.Repo
-				? this.props.repoName || "[repository]"
+				? this.state.repoName || "[repository]"
 				: this.props.teamName;
 
 		const domainItems = [
@@ -585,19 +610,11 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 			},
 			{
 				label: "Current Repository",
-				subtle: this.props.repoName || "",
+				subtle: this.state.repoName || "",
 				key: "repo",
 				icon: <Icon name="repo" />,
 				action: () => this.switchDomain(CodemarkDomainType.Repo),
 				checked: codemarkDomain === CodemarkDomainType.Repo
-			},
-			{
-				label: "All Codemarks",
-				subtle: this.props.teamName,
-				key: "team",
-				icon: <Icon name="team" />,
-				action: () => this.switchDomain(CodemarkDomainType.Team),
-				checked: codemarkDomain === CodemarkDomainType.Team
 			}
 		];
 
@@ -641,26 +658,6 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 				key: "show-icons",
 				checked: false,
 				submenu: [
-					{
-						label: "Pull Request comments",
-						key: "show-prs",
-						checked: this.props.hasPRProvider
-							? this.state.pendingPRConnection
-								? true
-								: !!showPRComments
-							: false,
-
-						action: () => {
-							if (!this.props.hasPRProvider) {
-								this.setState({ showPRInfoModal: true });
-								this.setState({ pendingPRConnection: true });
-							} else {
-								this.setState({ pendingPRConnection: false });
-								setUserPreference(["codemarksShowPRComments"], !showPRComments);
-								// this.setState({ showPRCommentsField: !showPRCommentsField });
-							}
-						}
-					},
 					{
 						label: "Feedback Request comments",
 						key: "show-reviews",
@@ -758,7 +755,7 @@ export class SimpleCodemarksForFile extends Component<Props, State> {
 					</InlineMenu>
 				</PaneHeader>
 				{this.props.paneState !== PaneState.Collapsed && (
-					<PaneBody>{this.renderCodemarks()}</PaneBody>
+					<PaneBody key={"codemarks"}>{this.renderCodemarks()}</PaneBody>
 				)}
 			</>
 		);
@@ -788,15 +785,9 @@ const mapStateToProps = (state: CodeStreamState, props): ConnectedProps => {
 		"gitlab_enterprise"
 	].some(name => isConnected(state, { name }));
 
-	let repoName = "";
 	const scmInfo = editorContext.scmInfo;
 	if (scmInfo && scmInfo.scm) {
 		MOST_RECENT_SCM_INFO = scmInfo;
-	}
-
-	if (MOST_RECENT_SCM_INFO && MOST_RECENT_SCM_INFO.scm) {
-		const { repoId } = MOST_RECENT_SCM_INFO.scm;
-		if (repoId && repos[repoId]) repoName = repos[repoId].name;
 	}
 
 	const codemarkDomain: CodemarkDomainType = preferences.codemarkDomain || CodemarkDomainType.Repo;
@@ -869,7 +860,6 @@ const mapStateToProps = (state: CodeStreamState, props): ConnectedProps => {
 	return {
 		repos,
 		teamName,
-		repoName,
 		hasPRProvider,
 		currentStreamId: context.currentStreamId,
 		showHidden: preferences.codemarksShowArchived || false,
@@ -877,7 +867,6 @@ const mapStateToProps = (state: CodeStreamState, props): ConnectedProps => {
 		showReviews,
 		wrapComments: preferences.codemarksWrapComments || false,
 		hideTags: preferences.codemarksHideTags || false,
-		showPRComments: hasPRProvider && preferences.codemarksShowPRComments,
 		fileNameToFilterFor: editorContext.activeFile,
 		scmInfo: MOST_RECENT_SCM_INFO,
 		currentBranch,

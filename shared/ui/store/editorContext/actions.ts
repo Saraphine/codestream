@@ -24,3 +24,9 @@ export const changeSelection = (uri: string, range: EditorSelection) => async di
 
 	dispatch(setEditorContext({ textEditorSelections: [range] }));
 };
+
+export const appendProcessBuffer = (payload: { text: string }) =>
+	action(EditorContextActionsType.AppendProcessBuffer, payload);
+
+export const clearProcessBuffer = (payload: {}) =>
+	action(EditorContextActionsType.ClearProcessBuffer, payload);

@@ -1,8 +1,13 @@
 import { expect } from "chai";
-import { describe, it } from "mocha";
+require("mocha").describe;
+require("mocha").it;
 import { CSUser } from "protocol/api.protocol";
 import { stubInterface } from "ts-sinon";
-import { toSlackPostBlocks, toSlackTextSafe, UserMaps } from "../../../../src/api/slack/slackSharingApi.adapters";
+import {
+	toSlackPostBlocks,
+	toSlackTextSafe,
+	UserMaps
+} from "../../../../src/api/slack/slackSharingApi.adapters";
 
 describe("slackSharingApi.adapters.ts", () => {
 	const userMaps = stubInterface<UserMaps>();
@@ -31,10 +36,11 @@ describe("slackSharingApi.adapters.ts", () => {
 
 	describe("toSlackPostBlocks", () => {
 		it("can create slack blocks", () => {
-			const blocks = toSlackPostBlocks({
-				text: "hey @cheese, what is going on this this `variable`?",
-				type: "comment"
-			} as any,
+			const blocks = toSlackPostBlocks(
+				{
+					text: "hey @cheese, what is going on this this `variable`?",
+					type: "comment"
+				} as any,
 				undefined,
 				userMaps,
 				{
@@ -42,7 +48,8 @@ describe("slackSharingApi.adapters.ts", () => {
 						name: "repo123"
 					} as any
 				},
-				"");
+				""
+			);
 			expect(blocks.length).to.be.greaterThan(2);
 		});
 	});

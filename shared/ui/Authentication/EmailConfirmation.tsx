@@ -1,8 +1,15 @@
-import React, { useState, useCallback, useRef } from "react";
-import { connect } from "react-redux";
+import { CodeStreamState } from "@codestream/webview/store";
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import { connect, useSelector } from "react-redux";
 import { FormattedMessage } from "react-intl";
 import { Link } from "../Stream/Link";
-import { goToSignup, goToTeamCreation, goToLogin } from "../store/context/actions";
+import {
+	goToSignup,
+	goToTeamCreation,
+	goToLogin,
+	goToCompanyCreation
+} from "../store/context/actions";
+import { setEnvironment } from "../store/session/actions";
 import { TextInput } from "./TextInput";
 import Button from "../Stream/Button";
 import { DispatchProp } from "../store/common";
@@ -10,19 +17,26 @@ import { HostApi } from "../webview-api";
 import {
 	ConfirmRegistrationRequestType,
 	RegisterUserRequestType,
-	RegisterUserRequest
+	RegisterUserRequest,
+	ConfirmLoginCodeRequestType,
+	GenerateLoginCodeRequestType
 } from "@codestream/protocols/agent";
 import { LoginResult } from "@codestream/protocols/api";
-import { completeSignup } from "./actions";
+import { authenticate, completeSignup } from "./actions";
+import Icon from "../Stream/Icon";
 
 const errorToMessageId = {
 	[LoginResult.InvalidToken]: "confirmation.invalid",
 	[LoginResult.ExpiredToken]: "confirmation.expired",
 	[LoginResult.AlreadyConfirmed]: "login.alreadyConfirmed",
+	[LoginResult.ExpiredCode]: "confirmation.expired",
+	[LoginResult.TooManyAttempts]: "confirmation.tooManyAttempts",
+	[LoginResult.InvalidCode]: "confirmation.invalid",
 	[LoginResult.Unknown]: "unexpectedError"
 };
 
 interface InheritedProps {
+	confirmationType: "signup" | "login";
 	email: string;
 	teamId: string;
 	registrationParams: RegisterUserRequest;
@@ -34,9 +48,16 @@ const array = new Array(defaultArrayLength);
 const initialValues: string[] = [...array].fill("");
 
 export const EmailConfirmation = (connect() as any)((props: Props) => {
+	const derivedState = useSelector((state: CodeStreamState) => {
+		const { context } = state;
+		const errorGroupGuid = context.pendingProtocolHandlerQuery?.errorGroupGuid;
+		return { errorGroupGuid };
+	});
+
 	const inputs = useRef(array);
 	const [emailSent, setEmailSent] = useState(false);
 	const [digits, setValues] = useState(initialValues);
+	const [pastedAt, setPastedAt] = useState<number | undefined>(undefined);
 
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<LoginResult | undefined>();
@@ -45,59 +66,123 @@ export const EmailConfirmation = (connect() as any)((props: Props) => {
 		async (event: React.MouseEvent) => {
 			event.preventDefault();
 			setEmailSent(false);
-			await HostApi.instance.send(RegisterUserRequestType, props.registrationParams);
+			if (props.confirmationType === "signup") {
+				await HostApi.instance.send(RegisterUserRequestType, props.registrationParams);
+			} else {
+				await HostApi.instance.send(GenerateLoginCodeRequestType, { email: props.email });
+			}
 			setEmailSent(true);
 		},
 		[props.email]
 	);
 
+	useEffect(() => {
+		if (!pastedAt) return;
+
+		if (digits?.length) {
+			const code = digits.join("");
+			if (code.length < defaultArrayLength) {
+				return;
+			}
+
+			setIsLoading(true);
+			// make it seem a little more natural
+			setTimeout(() => {
+				onSubmit();
+			}, 1000);
+		}
+	}, [pastedAt]);
+
 	const onSubmit = async (event?: React.FormEvent) => {
 		event && event.preventDefault();
 		setError(undefined);
 		const code = digits.join("");
-		if (code.length < defaultArrayLength) return;
+		if (code.length < defaultArrayLength) {
+			setIsLoading(false);
+			return;
+		}
 
-		setIsLoading(true);
-
-		const result = await HostApi.instance.send(ConfirmRegistrationRequestType, {
-			email: props.email,
-			confirmationCode: code
-		});
-
-		switch (result.status) {
-			case LoginResult.NotOnTeam: {
-				HostApi.instance.track("Email Confirmed");
-				props.dispatch(goToTeamCreation({ token: result.token, email: props.email }));
-				break;
-			}
-			case LoginResult.Success: {
-				HostApi.instance.track("Email Confirmed");
-				try {
-					props.dispatch(
-						completeSignup(props.email, result.token!, props.teamId, { createdTeam: false })
-					);
-				} catch (error) {
-					// TODO?: communicate confirmation was successful
-					// TODO: communicate error logging in
-					props.dispatch(goToLogin());
-				}
-				break;
-			}
-			default: {
-				setError(result.status);
+		if (props.confirmationType === "login") {
+			try {
+				await props.dispatch(authenticate({ code, email: props.email }));
+			} catch (error) {
+				setError(error);
 				setIsLoading(false);
+			}
+		} else {
+			const result = await HostApi.instance.send(ConfirmRegistrationRequestType, {
+				email: props.email,
+				errorGroupGuid: derivedState.errorGroupGuid,
+				confirmationCode: code
+			});
+
+			// as a result of confirmation, we may be told to switch environments (i.e., regions)
+			if (result.setEnvironment) {
+				const { environment, serverUrl } = result.setEnvironment;
+				console.log(
+					`Upon confirmation, received instruction to change environments to ${environment}:${serverUrl}`
+				);
+				props.dispatch(setEnvironment(environment, serverUrl));
+			}
+			switch (result.status) {
+				case LoginResult.NotInCompany: {
+					HostApi.instance.track("Email Confirmed");
+					props.dispatch(
+						goToCompanyCreation({
+							...result,
+							userId: result.user?.id,
+							email: props.email
+						})
+					);
+					break;
+				}
+				case LoginResult.NotOnTeam: {
+					HostApi.instance.track("Email Confirmed");
+					props.dispatch(goToTeamCreation({ token: result.token, email: props.email }));
+
+					break;
+				}
+				case LoginResult.Success: {
+					HostApi.instance.track("Email Confirmed");
+					try {
+						props.dispatch(
+							completeSignup(props.email, result.token!, props.teamId, {
+								createdTeam: false,
+								setEnvironment: result.setEnvironment
+							})
+						);
+					} catch (error) {
+						// TODO?: communicate confirmation was successful
+						// TODO: communicate error logging in
+						props.dispatch(goToLogin());
+					}
+					break;
+				}
+				default: {
+					setError(result.status);
+					setIsLoading(false);
+				}
 			}
 		}
 	};
 
 	const onClickChangeIt = (event: React.SyntheticEvent) => {
 		event.preventDefault();
-		props.dispatch(goToSignup());
+		if (props.confirmationType === "signup") {
+			props.dispatch(goToSignup());
+		} else {
+			props.dispatch(goToLogin());
+		}
 	};
 
 	const onClickGoToLogin = (event: React.SyntheticEvent) => {
 		event.preventDefault();
 		props.dispatch(goToLogin());
+	};
+
+	const onClickGoToSignUp = (event: React.SyntheticEvent) => {
+		event.preventDefault();
+		props.dispatch(goToSignup());
 	};
 
 	const nativeProps = {
@@ -158,6 +243,7 @@ export const EmailConfirmation = (connect() as any)((props: Props) => {
 												if (string.length !== defaultArrayLength) return;
 
 												setValues(string.split(""));
+												setPastedAt(new Date().getTime());
 											}}
 											onChange={value => {
 												setError(undefined);
@@ -187,8 +273,11 @@ export const EmailConfirmation = (connect() as any)((props: Props) => {
 								</div>
 							</div>
 							<div className="button-group">
-								<Button className="control-button" type="submit" loading={isLoading}>
-									<FormattedMessage id="confirmation.submitButton" />
+								<Button className="row-button" type="submit" loading={isLoading}>
+									<div className="copy">
+										<FormattedMessage id="confirmation.submitButton" />
+									</div>
+									<Icon name="chevron-right" />
 								</Button>
 							</div>
 						</div>
@@ -196,9 +285,22 @@ export const EmailConfirmation = (connect() as any)((props: Props) => {
 					<div id="controls">
 						<div className="footer">
 							<div>
-								<p>
-									Already have an account? <Link onClick={onClickGoToLogin}>Sign In</Link>
-								</p>
+								{props.confirmationType === "signup" && (
+									<p>
+										<FormattedMessage
+											id="emailConfirmation.alreadyAccount"
+											defaultMessage="Already have an account?"
+										/>{" "}
+										<Link onClick={onClickGoToLogin}>
+											<FormattedMessage id="emailConfirmation.signIn" defaultMessage="Sign In" />
+										</Link>
+									</p>
+								)}
+								{props.confirmationType === "login" && (
+									<p>
+										Don’t have an account? <Link onClick={onClickGoToSignUp}>Sign Up</Link>
+									</p>
+								)}
 							</div>
 						</div>
 					</div>

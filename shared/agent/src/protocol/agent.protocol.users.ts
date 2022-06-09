@@ -5,6 +5,8 @@ import { CSMe, CSMePreferences, CSMeStatus, CSPresenceStatus, CSUser } from "./a
 
 export interface FetchUsersRequest {
 	userIds?: string[];
+	codeErrorId?: string;
+	allCodeErrors?: boolean;
 }
 
 export interface FetchUsersResponse {
@@ -92,6 +94,19 @@ export const DeleteUserRequestType = new RequestType<
 	void
 >("codestream/user/delete");
 
+export interface DeleteMeUserRequest {
+	userId: string;
+}
+
+export interface DeleteMeUserResponse {}
+
+export const DeleteMeUserRequestType = new RequestType<
+	DeleteMeUserRequest,
+	DeleteMeUserResponse,
+	void,
+	void
+>("codestream/users/me/delete");
+
 export interface KickUserRequest {
 	teamId: string;
 	userId: string;
@@ -166,28 +181,6 @@ export const UpdateInvisibleRequestType = new RequestType<
 	void
 >("codestream/user/updateInvisible");
 
-export interface SetModifiedReposRequest {
-	modifiedRepos: RepoScmStatus[];
-	teamId: string;
-}
-
-export const SetModifiedReposRequestType = new RequestType<
-	SetModifiedReposRequest,
-	void,
-	void,
-	void
->("codestream/user/setModifiedRepos");
-
-export interface GetMeRequest {}
-
-export interface GetMeResponse {
-	user: CSMe;
-}
-
-export const GetMeRequestType = new RequestType<GetMeRequest, GetMeResponse, void, void>(
-	"codestream/users/me"
-);
-
 export interface GetUnreadsRequest {}
 
 export interface GetUnreadsResponse {
@@ -208,13 +201,3 @@ export interface GetPreferencesResponse {
 export const GetPreferencesRequestType = new RequestType<void, GetPreferencesResponse, void, void>(
 	"codestream/users/me/preferences"
 );
-
-export interface CompactModifiedRepo {
-	repoId: string;
-	repoPath: string;
-	branch: string;
-	localCommits: string[];
-	modifiedFiles: string[];
-	startCommit: string;
-	stompingAuthors: string[];
-}

@@ -2,15 +2,15 @@
 import * as chokidar from "chokidar";
 import * as fs from "fs";
 import * as path from "path";
+import { Disposable, Emitter, Event, WorkspaceFoldersChangeEvent } from "vscode-languageserver";
+import { URI } from "vscode-uri";
+import { Container, SessionContainer } from "../container";
+import { Logger, TraceLevel } from "../logger";
 import {
 	CommitsChangedData,
 	ReportingMessageType,
 	WorkspaceChangedData
 } from "../protocol/agent.protocol";
-import { Disposable, Emitter, Event, WorkspaceFoldersChangeEvent } from "vscode-languageserver";
-import { URI } from "vscode-uri";
-import { Container, SessionContainer } from "../container";
-import { Logger, TraceLevel } from "../logger";
 import { MatchReposRequest, RepoMap } from "../protocol/agent.protocol.repos";
 import { CSRepository } from "../protocol/api.protocol";
 import { CodeStreamSession } from "../session";

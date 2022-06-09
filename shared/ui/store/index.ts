@@ -7,6 +7,7 @@ import thunk from "redux-thunk";
 import { reduceApiVersioning } from "../store/apiVersioning/reducer";
 import { reduceCapabilities, CapabilitiesState } from "../store/capabilities/reducer";
 import { reduceCodemarks } from "../store/codemarks/reducer";
+import { reduceCodeErrors } from "../store/codeErrors/reducer";
 import { reduceConfigs } from "../store/configs/reducer";
 import { reduceConnectivity } from "../store/connectivity/reducer";
 import { reduceContext } from "../store/context/reducer";
@@ -27,6 +28,7 @@ import { reduceDocumentMarkers } from "../store/documentMarkers/reducer";
 import { debounceToAnimationFrame } from "../utils";
 import middleware from "./middleware";
 import { reduceEditorContext } from "./editorContext/reducer";
+import { CodeErrorsState } from "./codeErrors/types";
 import { CodemarksState } from "./codemarks/types";
 import { ConfigsState } from "./configs/types";
 import { ConnectivityState } from "./connectivity/types";
@@ -57,6 +59,8 @@ import { DocumentsState } from "./documents/types";
 import { reduceReviews } from "./reviews/reducer";
 import { reduceProviderPullRequests } from "./providerPullRequests/reducer";
 import { ProviderPullRequestsState } from "./providerPullRequests/types";
+import { reduceDynamicLogging } from "./dynamicLogging/reducer";
+import { DynamicLoggingState } from "./dynamicLogging/types";
 
 const pluginVersion = (state = "", action) => {
 	if (action.type === "@pluginVersion/Set") return action.payload;
@@ -91,7 +95,9 @@ const reducer = combineReducers({
 	providers: reduceProviders,
 	versioning: reduceVersioning,
 	apiVersioning: reduceApiVersioning,
-	providerPullRequests: reduceProviderPullRequests
+	providerPullRequests: reduceProviderPullRequests,
+	codeErrors: reduceCodeErrors,
+	dynamicLogging: reduceDynamicLogging
 });
 
 export function createCodeStreamStore(
@@ -139,4 +145,6 @@ export interface CodeStreamState {
 	umis: UnreadsState;
 	users: UsersState;
 	versioning: VersioningState;
+	codeErrors: CodeErrorsState;
+	dynamicLogging: DynamicLoggingState;
 }

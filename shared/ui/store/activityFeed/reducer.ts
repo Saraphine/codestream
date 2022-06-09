@@ -8,6 +8,8 @@ import { ActionType } from "../common";
 import { uniq } from "lodash-es";
 import { ReviewsState } from "../reviews/types";
 import { getReview } from "../reviews/reducer";
+import { CodeErrorsState } from "../codeErrors/types";
+import { getCodeError } from "../codeErrors/reducer";
 
 type ActivityFeedAction = ActionType<typeof actions>;
 
@@ -38,11 +40,13 @@ export function reduceActivityFeed(state = initialState, action: ActivityFeedAct
 export const getActivity = createSelector(
 	(state: CodeStreamState) => state.codemarks,
 	(state: CodeStreamState) => state.reviews,
+	(state: CodeStreamState) => state.codeErrors,
 	(state: CodeStreamState) => state.activityFeed.records,
 	// (state: CodeStreamState) => state.posts,
 	(
 		codemarks: CodemarksState,
 		reviewsState: ReviewsState,
+		codeErrorsState: CodeErrorsState,
 		activityFeed: ActivityFeedActivity[]
 		// posts: PostsState
 	) => {
@@ -62,6 +66,13 @@ export const getActivity = createSelector(
 					return {
 						type: model,
 						record: review
+					};
+				case "codeError":
+					const codeError = getCodeError(codeErrorsState, id);
+					if (codeError == null || codeError.deactivated) return;
+					return {
+						type: model,
+						record: codeError
 					};
 				default:
 					return;

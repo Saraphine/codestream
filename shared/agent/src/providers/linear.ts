@@ -1,8 +1,9 @@
 "use strict";
 import { GraphQLClient } from "graphql-request";
-import { Logger } from "logger";
 import {
 	CreateThirdPartyCardRequest,
+	FetchAssignableUsersAutocompleteRequest,
+	FetchAssignableUsersResponse,
 	FetchThirdPartyBoardsRequest,
 	FetchThirdPartyBoardsResponse,
 	FetchThirdPartyCardsRequest,
@@ -50,7 +51,9 @@ export class LinearProvider extends ThirdPartyIssueProviderBase<CSLinearProvider
 	async onDisconnected(request?: ThirdPartyDisconnect) {
 		// delete the graphql client so it will be reconstructed if a new token is applied
 		delete this._client;
-		super.onDisconnected(request);
+		delete this._linearUserInfo;
+		delete this._linearTeams;
+		return super.onDisconnected(request);
 	}
 
 	get graphQlBaseUrl() {
@@ -145,12 +148,12 @@ export class LinearProvider extends ThirdPartyIssueProviderBase<CSLinearProvider
 	async getBoards(request: FetchThirdPartyBoardsRequest): Promise<FetchThirdPartyBoardsResponse> {
 		await this.ensureConnected();
 
-		let teams = await this.getTeams();
+		const teams = await this.getTeams();
 		teams.sort((a, b) => {
 			return a.name.localeCompare(b.name);
 		});
 		let boards: ThirdPartyProviderBoard[] = [];
-		for (let team of teams) {
+		for (const team of teams) {
 			boards.push({ id: `${team.id}_`, name: `${team.name}/No Project` });
 			const response = await this.query<{ data: { issues: { nodes: LinearProject[] } } }>(
 				`query GetBoards($teamId: String!) {

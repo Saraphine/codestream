@@ -84,4 +84,10 @@ namespace CodeStream.VisualStudio.Core.Models {
 		public const string MethodName = "webview/showChangedFile/previous";
 		public override string Method => MethodName;
 	}
+
+	public class ConfigChangeReloadNotification {}
+	public class ConfigChangeReloadNotificationType : NotificationType<ConfigChangeReloadNotification> {
+		public const string MethodName = "codestream/configChangeReload";
+		public override string Method => MethodName;
+	}
 }

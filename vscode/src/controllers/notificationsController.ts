@@ -86,6 +86,8 @@ export class NotificationsController implements Disposable {
 				review = post.review;
 			}
 
+			if (!codemark && !review) continue;
+
 			const mentioned = post.mentioned(user.id);
 			// If we are muted and not mentioned, skip it
 			if (user.hasMutedChannel(post.streamId) && !mentioned) continue;
@@ -131,11 +133,7 @@ export class NotificationsController implements Disposable {
 		}
 	}
 
-	async showNotification(
-		post: Post,
-		codemark?: CodemarkPlus,
-		review?: ReviewPlus
-	) {
+	async showNotification(post: Post, codemark?: CodemarkPlus, review?: ReviewPlus) {
 		const sender = await post.sender();
 
 		const emote = post.text.startsWith("/me ");

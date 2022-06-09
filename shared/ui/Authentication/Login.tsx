@@ -3,10 +3,23 @@ import { FormattedMessage } from "react-intl";
 import { connect } from "react-redux";
 import Icon from "../Stream/Icon";
 import Button from "../Stream/Button";
-import { authenticate, startSSOSignin, startIDESignin } from "./actions";
+import { authenticate, generateLoginCode, startSSOSignin, startIDESignin } from "./actions";
 import { CodeStreamState } from "../store";
-import { goToNewUserEntry, goToForgotPassword, goToOktaConfig } from "../store/context/actions";
+import {
+	goToNewUserEntry,
+	goToForgotPassword,
+	goToOktaConfig,
+	clearForceRegion
+} from "../store/context/actions";
 import { supportsSSOSignIn } from "../store/configs/reducer";
+import { InlineMenu } from "../src/components/controls/InlineMenu";
+import Tooltip from "../Stream/Tooltip";
+import { ModalRoot } from "../Stream/Modal"; // HACK ALERT: including this component is NOT the right way
+import { EnvironmentHost } from "../protocols/agent/agent.protocol";
+import { setEnvironment } from "../store/session/actions";
+import { TooltipIconWrapper } from "./Signup";
+import { Dropdown } from "../Stream/Dropdown";
+import { isFeatureEnabled } from "../store/apiVersioning/reducer";
 
 const isPasswordInvalid = password => password.length === 0;
 const isEmailInvalid = email => {
@@ -22,12 +35,18 @@ interface ConnectedProps {
 	oktaEnabled?: boolean;
 	isInVSCode?: boolean;
 	supportsVSCodeGithubSignin?: boolean;
+	environmentHosts?: EnvironmentHost[];
+	selectedRegion?: string;
+	supportsMultiRegion?: boolean;
 }
 
 interface DispatchProps {
 	authenticate: (
 		...args: Parameters<typeof authenticate>
 	) => ReturnType<ReturnType<typeof authenticate>>;
+	generateLoginCode: (
+		...args: Parameters<typeof generateLoginCode>
+	) => ReturnType<ReturnType<typeof generateLoginCode>>;
 	goToNewUserEntry: typeof goToNewUserEntry;
 	startSSOSignin: (
 		...args: Parameters<typeof startSSOSignin>
@@ -35,6 +54,8 @@ interface DispatchProps {
 	goToForgotPassword: typeof goToForgotPassword;
 	goToOktaConfig: typeof goToOktaConfig;
 	startIDESignin: typeof startIDESignin;
+	setEnvironment: typeof setEnvironment;
+	clearForceRegion: typeof clearForceRegion;
 }
 
 interface Props extends ConnectedProps, DispatchProps {}
@@ -46,6 +67,7 @@ interface State {
 	emailTouched: boolean;
 	loading: boolean;
 	error: string | undefined;
+	activeLoginMode: "code" | "password";
 }
 
 class Login extends React.Component<Props, State> {
@@ -57,7 +79,8 @@ class Login extends React.Component<Props, State> {
 			passwordTouched: false,
 			emailTouched: false,
 			loading: false,
-			error: undefined
+			error: undefined,
+			activeLoginMode: "code"
 		};
 	}
 
@@ -118,7 +141,7 @@ class Login extends React.Component<Props, State> {
 						id="error.unexpected"
 						defaultMessage="Something went wrong! Please try again, or "
 					/>
-					<a href="https://help.codestream.com">
+					<a href="https://docs.newrelic.com/docs/codestream/">
 						<FormattedMessage id="contactSupport" defaultMessage="contact support" />
 					</a>
 					.
@@ -131,7 +154,7 @@ class Login extends React.Component<Props, State> {
 						id="something-is-screwed"
 						defaultMessage={this.state.error.toString()}
 					/>{" "}
-					<a href="https://help.codestream.com">
+					<a href="https://docs.newrelic.com/docs/codestream/">
 						<FormattedMessage id="contactSupport" defaultMessage="contact support" />
 					</a>
 					.
@@ -157,6 +180,22 @@ class Login extends React.Component<Props, State> {
 		this.setState({ loading: true });
 		try {
 			await this.props.authenticate({ password, email });
+		} catch (error) {
+			this.setState({ loading: false });
+			this.setState({ error });
+		}
+	};
+
+	submitGenerateCode = async event => {
+		event.preventDefault();
+		const { email } = this.state;
+		if (isEmailInvalid(email)) {
+			if (!this.state.emailTouched) this.setState({ emailTouched: true });
+			return;
+		}
+		this.setState({ loading: true });
+		try {
+			await this.props.generateLoginCode(email);
 		} catch (error) {
 			this.setState({ loading: false });
 			this.setState({ error });
@@ -192,14 +231,68 @@ class Login extends React.Component<Props, State> {
 		this.props.goToOktaConfig({});
 	};
 
+	handleClickSwitchToCodeMode = event => {
+		event.preventDefault();
+		this.setState({ activeLoginMode: "code" });
+	};
+
+	handleClickSwitchToPasswordMode = event => {
+		event.preventDefault();
+		this.setState({ activeLoginMode: "password" });
+	};
+
 	onClickForgotPassword = (event: React.SyntheticEvent) => {
 		event.preventDefault();
 		this.props.goToForgotPassword({ email: this.state.email });
 	};
 
+	setSelectedRegion = region => {
+		if (this.props.environmentHosts) {
+			const host = this.props.environmentHosts!.find(host => host.shortName === region);
+			if (host) {
+				this.props.setEnvironment(host.shortName, host.publicApiUrl);
+			}
+			this.props.clearForceRegion();
+		}
+	};
+
 	render() {
+		let regionItems,
+			selectedRegionName = "";
+		if (
+			this.props.supportsMultiRegion &&
+			this.props.environmentHosts &&
+			this.props.environmentHosts.length > 1
+		) {
+			let usHost = this.props.environmentHosts.find(host =>
+				host.shortName.match(/(^|[^a-zA-Z\d\s:])us($|[^a-zA-Z\d\s:])/)
+			);
+			if (!usHost) {
+				usHost = this.props.environmentHosts[0];
+			}
+			regionItems = this.props.environmentHosts.map(host => ({
+				key: host.shortName,
+				label: host.name,
+				action: () => this.setSelectedRegion(host.shortName)
+			}));
+			if (!this.props.selectedRegion && usHost) {
+				this.props.setEnvironment(usHost.shortName, usHost.publicApiUrl);
+			}
+			if (this.props.selectedRegion) {
+				const selectedHost = this.props.environmentHosts.find(
+					host => host.shortName === this.props.selectedRegion
+				);
+				if (selectedHost) {
+					selectedRegionName = selectedHost.name;
+				} else if (usHost) {
+					this.props.setEnvironment(usHost.shortName, usHost.publicApiUrl);
+				}
+			}
+		}
+
 		return (
 			<div id="login-page" className="onboarding-page">
+				<ModalRoot />
 				<form className="standard-form">
 					<fieldset className="form-body">
 						{/* this.renderAccountMessage() */}
@@ -211,7 +304,9 @@ class Login extends React.Component<Props, State> {
 										onClick={this.handleClickGithubLogin}
 									>
 										<Icon name="mark-github" />
-										<div className="copy">Sign In with GitHub</div>
+										<div className="copy">
+											<FormattedMessage id="login.signGH" defaultMessage="Sign In with GitHub" />
+										</div>
 										<Icon name="chevron-right" />
 									</Button>
 									<Button
@@ -219,7 +314,9 @@ class Login extends React.Component<Props, State> {
 										onClick={this.handleClickGitlabLogin}
 									>
 										<Icon name="gitlab" />
-										<div className="copy">Sign In with GitLab</div>
+										<div className="copy">
+											<FormattedMessage id="login.signGL" defaultMessage="Sign In with GitLab" />
+										</div>
 										<Icon name="chevron-right" />
 									</Button>
 									<Button
@@ -227,7 +324,9 @@ class Login extends React.Component<Props, State> {
 										onClick={this.handleClickBitbucketLogin}
 									>
 										<Icon name="bitbucket" />
-										<div className="copy">Sign In with Bitbucket</div>
+										<div className="copy">
+											<FormattedMessage id="login.signBb" defaultMessage="Sign In with Bitbucket" />
+										</div>
 										<Icon name="chevron-right" />
 									</Button>
 									{this.props.oktaEnabled && (
@@ -236,12 +335,16 @@ class Login extends React.Component<Props, State> {
 											onClick={this.handleClickOktaLogin}
 										>
 											<Icon name="okta" />
-											<div className="copy">Sign In with Okta</div>
+											<div className="copy">
+												<FormattedMessage id="login.signOkta" defaultMessage="Sign In with Okta" />
+											</div>
 											<Icon name="chevron-right" />
 										</Button>
 									)}
 									<div className="separator-label">
-										<span className="or">or</span>
+										<span className="or">
+											<FormattedMessage id="login.or" defaultMessage="or" />
+										</span>
 									</div>
 								</div>
 							)}
@@ -269,43 +372,92 @@ class Login extends React.Component<Props, State> {
 									/>
 									{this.renderEmailError()}
 								</div>
-								<div id="password-controls" className="control-group">
-									<label>
-										<FormattedMessage id="login.password.label" />
-									</label>
-									<input
-										id="login-input-password"
-										className="input-text"
-										type="password"
-										name="password"
-										value={this.state.password}
-										onChange={e => this.setState({ password: e.target.value })}
-										onBlur={this.onBlurPassword}
-										required={this.state.passwordTouched}
-									/>
-									{this.renderPasswordHelp()}
-									{
-										<div className="help-link">
-											<a onClick={this.onClickForgotPassword}>
-												<FormattedMessage id="login.forgotPassword" />
-											</a>
+								{this.state.activeLoginMode === "password" && (
+									<>
+										<div id="password-controls" className="control-group">
+											<label>
+												<FormattedMessage id="login.password.label" />
+											</label>
+											<input
+												id="login-input-password"
+												className="input-text"
+												type="password"
+												name="password"
+												value={this.state.password}
+												onChange={e => this.setState({ password: e.target.value })}
+												onBlur={this.onBlurPassword}
+												required={this.state.passwordTouched}
+											/>
+											{this.renderPasswordHelp()}
+											{
+												<div className="help-link">
+													<a onClick={this.onClickForgotPassword}>
+														<FormattedMessage id="login.forgotPassword" />
+													</a>
+												</div>
+											}
 										</div>
-									}
-								</div>
-								<Button
-									className="row-button"
-									onClick={this.submitCredentials}
-									loading={this.state.loading}
-								>
-									<Icon name="codestream" />
-									<div className="copy">Sign In with CodeStream</div>
-									<Icon name="chevron-right" />
-								</Button>
+
+										<Button
+											className="row-button"
+											onClick={this.submitCredentials}
+											loading={this.state.loading}
+										>
+											<Icon name="codestream" />
+											<div className="copy">Sign in with Password</div>
+											<Icon name="chevron-right" />
+										</Button>
+										<p>
+											No password?{" "}
+											<a onClick={this.handleClickSwitchToCodeMode}>Sign in with a code instead.</a>
+										</p>
+									</>
+								)}
+								{this.state.activeLoginMode === "code" && (
+									<>
+										<Button
+											className="row-button"
+											onClick={this.submitGenerateCode}
+											loading={this.state.loading}
+										>
+											<Icon name="codestream" />
+											<div className="copy">Sign in with Code</div>
+											<Icon name="chevron-right" />
+										</Button>
+										<p>
+											We’ll email you a code so you can sign in without a password. Or,{" "}
+											<a onClick={this.handleClickSwitchToPasswordMode}>
+												you can sign in manually.
+											</a>
+										</p>
+									</>
+								)}
+								{regionItems && (
+									<p>
+										Trouble signing in? Make sure you're in the right region:
+										<Dropdown
+											selectedValue={selectedRegionName}
+											items={regionItems}
+											noModal={true}
+										/>
+										<Tooltip
+											placement={"bottom"}
+											title={`Select the region where your CodeStream organization is located.`}
+										>
+											<TooltipIconWrapper>
+												<Icon name="question" />
+											</TooltipIconWrapper>
+										</Tooltip>
+									</p>
+								)}
 							</div>
 						</div>
 						<div className="footer">
 							<p>
-								Don't have an account? <a onClick={this.handleClickSignup}>Sign Up</a>
+								<FormattedMessage id="login.noAccount" defaultMessage="Don't have an account?" />{" "}
+								<a onClick={this.handleClickSignup}>
+									<FormattedMessage id="login.signUp" defaultMessage="Sign Up" />
+								</a>
 							</p>
 						</div>
 					</fieldset>
@@ -317,21 +469,28 @@ class Login extends React.Component<Props, State> {
 
 const ConnectedLogin = connect<ConnectedProps, any, any, CodeStreamState>(
 	(state, props) => {
+		const supportsMultiRegion = isFeatureEnabled(state, "multiRegion");
 		return {
 			initialEmail: props.email !== undefined ? props.email : state.configs.email,
 			supportsSSOSignIn: supportsSSOSignIn(state.configs),
 			oktaEnabled: state.configs.isOnPrem,
 			isInVSCode: state.ide.name === "VSC",
-			supportsVSCodeGithubSignin: state.capabilities.vsCodeGithubSignin
+			supportsVSCodeGithubSignin: state.capabilities.vsCodeGithubSignin,
+			environmentHosts: state.configs.environmentHosts,
+			selectedRegion: state.context.__teamless__?.selectedRegion,
+			supportsMultiRegion
 		};
 	},
 	{
 		authenticate,
+		generateLoginCode,
 		goToNewUserEntry,
 		startSSOSignin,
 		startIDESignin,
 		goToForgotPassword,
-		goToOktaConfig
+		goToOktaConfig,
+		setEnvironment,
+		clearForceRegion
 	}
 )(Login);
 

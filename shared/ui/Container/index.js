@@ -21,6 +21,7 @@ import { darkTheme, createTheme } from "../src/themes";
 import { closeAllPanels } from "../store/context/actions";
 import { WebviewErrorRequestType } from "@codestream/protocols/agent";
 import { PresentTOS } from "../Authentication/PresentTOS";
+import { Button } from "../src/components/Button";
 
 const mapStateToProps = state => {
 	const team = state.teams[state.context.currentTeamId];
@@ -37,7 +38,8 @@ const mapStateToProps = state => {
 		serverUrl: state.configs.serverUrl,
 		isOnPrem: state.configs.isOnPrem,
 		offline: state.connectivity.offline,
-		acceptedTOS: state.session.userId ? state.preferences.acceptedTOS : state.session.acceptedTOS
+		acceptedTOS: state.session.userId ? state.preferences.acceptedTOS : state.session.acceptedTOS,
+		configChangeReloadRequired: state.configs.configChangeReloadRequired
 	};
 };
 
@@ -61,9 +63,9 @@ const getIdeInstallationInstructions = props => {
 		} else if (props.ide === "VS") {
 			specifics = (
 				<p>
-					Go to Extensions > Manage Extensions in VS 2019 (or Tools > Extensions and Updates in
-					2017) and then select Updates in the left pane. Select CodeStream in the middle pane, and
-					then click Update.
+					Go to Extensions &gt; Manage Extensions in VS 2019 (or Tools &gt; Extensions and Updates
+					in 2017) and then select Updates in the left pane. Select CodeStream in the middle pane,
+					and then click Update.
 				</p>
 			);
 		} else if (props.ide === "ATOM") {
@@ -106,7 +108,7 @@ const Root = connect(mapStateToProps)(props => {
 				</p>
 				<p>
 					If you are behind a network proxy,{" "}
-					<a href="https://docs.codestream.com/userguide/faq/proxy-support">
+					<a href="https://docs.newrelic.com/docs/codestream/troubleshooting/proxy-support/">
 						turn on CodeStream's proxy support
 					</a>
 					.
@@ -115,6 +117,34 @@ const Root = connect(mapStateToProps)(props => {
 			</Dismissable>
 		);
 	}
+
+	if (props.configChangeReloadRequired) {
+		if (props.ide === "VSC") {
+			HostApi.instance.send(RestartRequestType);
+			return (
+				<RoadBlock title="Reload Required">
+					<p>This configuration change requires your IDE to reload.</p>
+					<p>Please click "Reload" when prompted by your IDE.</p>
+				</RoadBlock>
+			);
+		} else if (props.ide === "VS") {
+			return (
+				<RoadBlock title="Reload Required">
+					<p>This configuration change requires CodeStream to reload.</p>
+					<p>CodeStream will reload when you click OK.</p>
+					<Button
+						onClick={e => {
+							e.preventDefault();
+							HostApi.instance.send(RestartRequestType);
+						}}
+					>
+						OK
+					</Button>
+				</RoadBlock>
+			);
+		}
+	}
+
 	if (props.versioning && props.versioning.type === VersioningActionsType.UpgradeRequired)
 		return (
 			<RoadBlock title="Update Required">
@@ -296,10 +326,10 @@ export default class Container extends React.Component {
 		if (this.state.hasError)
 			content = (
 				<div id="oops">
-					<form className="standard-form">
+					<div className="standard-form">
 						<fieldset className="form-body">
 							<div className="border-bottom-box">
-								<p>
+								<div>
 									<h3>An unexpected error has occurred. </h3>
 									<br />
 									<a onClick={this.handleClickReload}>Click here</a> to reload.
@@ -307,10 +337,10 @@ export default class Container extends React.Component {
 									<br />
 									If the problem persists please contact{" "}
 									<a href="mailto:support@codestream.com">support@codestream.com</a>
-								</p>
+								</div>
 							</div>
 						</fieldset>
-					</form>
+					</div>
 				</div>
 			);
 		else content = <Root />;

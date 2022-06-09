@@ -17,6 +17,7 @@ query GetPullRequest($fullPath: ID!, $iid: String!, $after: String) {
 			id
 			iid
 			createdAt
+			conflicts
 			sourceBranch
 			targetBranch
 			title
@@ -24,7 +25,7 @@ query GetPullRequest($fullPath: ID!, $iid: String!, $after: String) {
 			webUrl
 			state
 			mergedAt
-			workInProgress
+			draft
 			reference
 			projectId
 			mergeWhenPipelineSucceeds

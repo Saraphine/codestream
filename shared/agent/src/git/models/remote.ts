@@ -38,6 +38,7 @@ export enum GitRemoteType {
 
 export class GitRemote implements GitRemoteLike {
 	readonly uri: URI;
+	readonly rawUrl: string;
 
 	constructor(
 		public readonly repoPath: string,
@@ -48,6 +49,7 @@ export class GitRemote implements GitRemoteLike {
 		public readonly path: string,
 		public readonly types: { type: GitRemoteType; url: string }[]
 	) {
+		this.rawUrl = url;
 		this.uri = URI.parse(scheme ? url : `ssh://${url}`);
 	}
 
@@ -62,6 +64,25 @@ export class GitRemote implements GitRemoteLike {
 	get remoteWeight() {
 		const name = this.name.toLowerCase();
 		return name === "upstream" ? -100 : name === "origin" ? 0 : 100;
+	}
+
+	/**
+	 * Certain remote names are more important, and have more "weight" than others.
+	 * This includes "origin" and "upstream". We prioritize these by assigning them a lower
+	 * number. When sorting, these lower or negative numbers will naturally sort first
+	 *
+	 * @readonly
+	 * @memberof GitRemote
+	 */
+	remoteWeightByStrategy(strategy: "prioritizeOrigin" | "prioritizeUpstream" = "prioritizeOrigin") {
+		const name = this.name.toLowerCase();
+		if (name === "upstream") {
+			return strategy === "prioritizeUpstream" ? -100 : strategy === "prioritizeOrigin" ? -50 : 0;
+		}
+		if (name === "origin") {
+			return strategy === "prioritizeOrigin" ? -100 : strategy === "prioritizeUpstream" ? -50 : 0;
+		}
+		return 100;
 	}
 
 	get normalizedUrl(): string {

@@ -1,5 +1,5 @@
 "use strict";
-import { createHash, HexBase64Latin1Encoding } from "crypto";
+import { BinaryToTextEncoding, createHash } from "crypto";
 import * as fs from "fs";
 import * as readline from "readline";
 import { Range } from "vscode-languageserver";
@@ -25,7 +25,7 @@ export namespace FileSystem {
 	export async function sha1(
 		path: string,
 		range?: Range,
-		encoding: HexBase64Latin1Encoding = "base64"
+		encoding: BinaryToTextEncoding = "base64"
 	): Promise<string> {
 		const hash = createHash("sha1");
 
@@ -76,7 +76,7 @@ export namespace FileSystem {
 	export async function range(
 		path: string,
 		range: Range,
-		encoding: HexBase64Latin1Encoding = "base64"
+		encoding: BinaryToTextEncoding = "base64"
 	): Promise<string> {
 		let content = "";
 

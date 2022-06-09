@@ -10,6 +10,7 @@ import {
 	CSRepository
 } from "../../protocol/api.protocol";
 import {
+	RepoPullRequestProvider,
 	ThirdPartyProvider,
 	ThirdPartyProviderSupportsPullRequests
 } from "../../providers/provider";
@@ -46,13 +47,26 @@ export class GitRepository {
 	}
 
 	/**
-	 * Returns a list of remotes ordered by the weight of the origin name
+	 * Returns a list of remotes ordered by the weight of the remote name
 	 *
 	 * @return {*}
 	 * @memberof GitRepository
 	 */
-	async getWeightedRemotes() {
-		return sortBy(await this.getRemotes(), _ => [_.remoteWeight]);
+	async getWeightedRemotes(remotes?: GitRemote[]) {
+		return sortBy(remotes || (await this.getRemotes()), _ => [_.remoteWeight]);
+	}
+
+	/**
+	 * Returns a list of remotes ordered by the weight of the remote name
+	 *
+	 * @return {*}
+	 * @memberof GitRepository
+	 */
+	async getWeightedRemotesByStrategy(
+		remotes?: GitRemote[],
+		strategy: "prioritizeOrigin" | "prioritizeUpstream" = "prioritizeOrigin"
+	) {
+		return sortBy(remotes || (await this.getRemotes()), _ => [_.remoteWeightByStrategy(strategy)]);
 	}
 
 	async getStreams(): Promise<CSFileStream[]> {
@@ -109,15 +123,7 @@ export class GitRepository {
 	async getPullRequestProvider(
 		user?: CSMe,
 		connectedProviders?: (ThirdPartyProvider & ThirdPartyProviderSupportsPullRequests)[]
-	): Promise<
-		| {
-				repo: GitRepository;
-				providerId: string;
-				provider: ThirdPartyProvider & ThirdPartyProviderSupportsPullRequests;
-				remotes: GitRemote[];
-		  }
-		| undefined
-	> {
+	): Promise<RepoPullRequestProvider | undefined> {
 		try {
 			if (!user) {
 				Logger.warn("getPullRequestProvider no CSMe user");
@@ -150,6 +156,7 @@ export class GitRepository {
 							return {
 								repo: this,
 								providerId: providerId,
+								providerName: provider.name,
 								provider: provider,
 								remotes: remotes.filter(_ => remotePaths.includes(_.path))
 							};

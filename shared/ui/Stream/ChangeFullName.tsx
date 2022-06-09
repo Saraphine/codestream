@@ -68,7 +68,7 @@ export const ChangeFullName = props => {
 									defaultMessage="Something went wrong! Please try again, or "
 								/>
 								<FormattedMessage id="contactSupport" defaultMessage="contact support">
-									{text => <Link href="https://help.codestream.com">{text}</Link>}
+									{text => <Link href="https://docs.newrelic.com/docs/codestream/m">{text}</Link>}
 								</FormattedMessage>
 								.
 							</div>

@@ -1,11 +1,12 @@
 "use strict";
 import { NotificationType, TextDocumentIdentifier } from "vscode-languageserver-protocol";
-import { Document, CodeStreamEnvironmentInfo, GetMyPullRequestsResponse } from "./agent.protocol";
+import { CodeStreamEnvironmentInfo, Document, GetMyPullRequestsResponse } from "./agent.protocol";
 import { LoginSuccessResponse, TokenLoginRequest } from "./agent.protocol.auth";
 import { CodemarkPlus } from "./agent.protocol.codemarks";
 import { ThirdPartyProviders } from "./agent.protocol.providers";
 import {
 	CSApiCapabilities,
+	CSCodeError,
 	CSCompany,
 	CSLastReadItems,
 	CSLastReads,
@@ -53,6 +54,7 @@ export const DidChangeConnectionStatusNotificationType = new NotificationType<
 
 export enum ChangeDataType {
 	Codemarks = "codemarks",
+	CodeErrors = "codeErrors",
 	Commits = "commits",
 	Companies = "companies",
 	Documents = "documents",
@@ -120,6 +122,11 @@ export interface RepositoriesChangedNotification {
 export interface ReviewsChangedNotification {
 	type: ChangeDataType.Reviews;
 	data: CSReview[];
+}
+
+export interface CodeErrorsChangedNotification {
+	type: ChangeDataType.CodeErrors;
+	data: CSCodeError[];
 }
 
 export interface StreamsChangedNotification {
@@ -208,6 +215,7 @@ export type DidChangeDataNotification =
 	| PullRequestsChangedNotification
 	| RepositoriesChangedNotification
 	| ReviewsChangedNotification
+	| CodeErrorsChangedNotification
 	| StreamsChangedNotification
 	| TeamsChangedNotification
 	| UnreadsChangedNotification
@@ -309,6 +317,14 @@ export const DidFailLoginNotificationType = new NotificationType<void, void>(
 	"codestream/didFailLogin"
 );
 
+export const DidStartLoginCodeGenerationNotificationType = new NotificationType<void, void>(
+	"codestream/didStartLoginCodeGeneration"
+);
+
+export const DidFailLoginCodeGenerationNotificationType = new NotificationType<void, void>(
+	"codestream/didFailLoginCodeGeneration"
+);
+
 export type DidEncounterMaintenanceModeNotification = TokenLoginRequest;
 
 export const DidEncounterMaintenanceModeNotificationType = new NotificationType<
@@ -362,3 +378,32 @@ export const DidChangeBranchNotificationType = new NotificationType<
 	DidChangeBranchNotification,
 	void
 >("codestream/didChangeBranch");
+
+export interface DidChangeProcessBufferNotification {
+	text?: string;
+}
+
+export const DidChangeProcessBufferNotificationType = new NotificationType<
+	DidChangeProcessBufferNotification,
+	void
+>("codestream/didChangeProcessBuffer");
+
+export interface DidChangeObservabilityDataNotification {
+	type: "Assignment" | "RepositoryAssociation" | "Entity";
+	data?: {
+		entityGuid?: string;
+		repoId?: string;
+	};
+}
+
+export const DidChangeObservabilityDataNotificationType = new NotificationType<
+	DidChangeDataNotification,
+	void
+>("codestream/didChangeObservabilityData");
+
+export interface ConfigChangeReloadRequest {}
+
+export const ConfigChangeReloadNotificationType = new NotificationType<
+	ConfigChangeReloadRequest,
+	void
+>("codestream/configChangeReload");

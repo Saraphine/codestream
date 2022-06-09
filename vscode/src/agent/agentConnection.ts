@@ -1,6 +1,40 @@
 "use strict";
+import { Agent as HttpsAgent } from "https";
+
+import * as url from "url";
+import HttpsProxyAgent from "https-proxy-agent";
 import {
+	Event,
+	EventEmitter,
+	ExtensionContext,
+	OutputChannel,
+	Uri,
+	window,
+	workspace
+} from "vscode";
+import {
+	CancellationToken,
+	CancellationTokenSource,
+	CloseAction,
+	Disposable,
+	ErrorAction,
+	LanguageClient,
+	LanguageClientOptions,
+	Message,
+	NodeModule,
+	NotificationType,
+	Range,
+	RequestType,
+	RevealOutputChannelOn,
+	ServerOptions,
+	TransportKind
+} from "vscode-languageclient";
+import {
+	AgentFileSearchRequestType,
+	AgentInitializedNotificationType,
 	AgentInitializeResult,
+	AgentOpenUrlRequest,
+	AgentOpenUrlRequestType,
 	ApiRequestType,
 	ArchiveStreamRequestType,
 	BaseAgentOptions,
@@ -19,12 +53,14 @@ import {
 	DidChangeConnectionStatusNotificationType,
 	DidChangeDataNotification,
 	DidChangeDataNotificationType,
-	DidChangeServerUrlNotification,
-	DidChangeServerUrlNotificationType,
 	DidChangeDocumentMarkersNotification,
 	DidChangeDocumentMarkersNotificationType,
+	DidChangeProcessBufferNotification,
+	DidChangeProcessBufferNotificationType,
 	DidChangePullRequestCommentsNotification,
 	DidChangePullRequestCommentsNotificationType,
+	DidChangeServerUrlNotification,
+	DidChangeServerUrlNotificationType,
 	DidChangeVersionCompatibilityNotification,
 	DidChangeVersionCompatibilityNotificationType,
 	DidDetectUnreviewedCommitsNotification,
@@ -36,6 +72,9 @@ import {
 	DidLoginNotificationType,
 	DidLogoutNotification,
 	DidLogoutNotificationType,
+	DidResolveStackTraceLineNotification,
+	DidResolveStackTraceLineNotificationType,
+	DidSetEnvironmentNotificationType,
 	DidStartLoginNotificationType,
 	EditPostRequestType,
 	FetchCodemarksRequestType,
@@ -45,23 +84,30 @@ import {
 	FetchPostRepliesRequestType,
 	FetchPostsRequestType,
 	FetchReposRequestType,
+	FetchReviewsRequestType,
 	FetchStreamsRequestType,
 	FetchTeamsRequestType,
 	FetchUnreadStreamsRequestType,
 	FetchUsersRequestType,
+	FileLevelTelemetryRequestOptions,
+	FunctionLocator,
 	GetDocumentFromKeyBindingRequestType,
 	GetDocumentFromKeyBindingResponse,
 	GetDocumentFromMarkerRequestType,
 	GetDocumentFromMarkerResponse,
+	GetFileContentsAtRevisionRequestType,
+	GetFileContentsAtRevisionResponse,
+	GetFileLevelTelemetryRequestType,
 	GetFileScmInfoRequestType,
 	GetFileStreamRequestType,
 	GetFileStreamResponse,
 	GetMarkerRequestType,
-	GetMeRequestType,
 	GetPostRequestType,
 	GetPreferencesRequestType,
 	GetRepoRequestType,
+	GetReviewContentsLocalRequestType,
 	GetReviewContentsRequestType,
+	GetReviewRequestType,
 	GetStreamRequestType,
 	GetTeamRequestType,
 	GetUnreadsRequestType,
@@ -88,19 +134,10 @@ import {
 	UpdatePresenceRequestType,
 	UpdateStreamMembershipRequestType,
 	UpdateStreamMembershipResponse,
-	GetReviewRequestType,
-	GetReviewContentsLocalRequestType,
-	AgentOpenUrlRequest,
-	AgentOpenUrlRequestType,
-	FetchReviewsRequestType,
-	GetFileContentsAtRevisionRequestType,
-	GetFileContentsAtRevisionResponse,
-	AgentInitializedNotificationType,
 	UpdateUserRequest,
 	UpdateUserRequestType,
-	UserDidCommitNotificationType,
 	UserDidCommitNotification,
-	DidSetEnvironmentNotificationType
+	UserDidCommitNotificationType
 } from "@codestream/protocols/agent";
 import {
 	ChannelServiceType,
@@ -108,44 +145,27 @@ import {
 	CSMarkerIdentifier,
 	CSMePreferences,
 	CSPresenceStatus,
-	StreamType,
-	CSReviewCheckpoint
+	CSReviewCheckpoint,
+	StreamType
 } from "@codestream/protocols/api";
-import {
-	Event,
-	EventEmitter,
-	ExtensionContext,
-	OutputChannel,
-	Uri,
-	window,
-	workspace
-} from "vscode";
-import {
-	CancellationToken,
-	CancellationTokenSource,
-	CloseAction,
-	Disposable,
-	ErrorAction,
-	LanguageClient,
-	LanguageClientOptions,
-	Message,
-	NotificationType,
-	Range,
-	RequestType,
-	RevealOutputChannelOn,
-	ServerOptions,
-	TransportKind
-} from "vscode-languageclient";
+
 import { SessionSignedOutReason } from "../api/session";
 import { Container } from "../container";
 import { Logger } from "../logger";
 import { Functions, log } from "../system";
+import { getInitializationOptions } from "../extension";
 
 export { BaseAgentOptions };
 
 type NotificationParamsOf<NT> = NT extends NotificationType<infer N, any> ? N : never;
 type RequestParamsOf<RT> = RT extends RequestType<infer R, any, any, any> ? R : never;
 type RequestResponseOf<RT> = RT extends RequestType<any, infer R, any, any> ? R : never;
+
+// ServerOptions is a union type of 3 completely different types - pick the one we're using
+interface CSServerOptions {
+	run: NodeModule;
+	debug: NodeModule;
+}
 
 export class CodeStreamAgentConnection implements Disposable {
 	private _onDidLogin = new EventEmitter<DidLoginNotification>();
@@ -239,11 +259,16 @@ export class CodeStreamAgentConnection implements Disposable {
 		return this._onDidSetEnvironment.event;
 	}
 
+	private _onDidResolveStackTraceLine = new EventEmitter<DidResolveStackTraceLineNotification>();
+	get onDidResolveStackTraceLine(): Event<DidResolveStackTraceLineNotification> {
+		return this._onDidResolveStackTraceLine.event;
+	}
+
 	private _client: LanguageClient | undefined;
 	private _disposable: Disposable | undefined;
 	private _clientOptions: LanguageClientOptions;
 	private _clientReadyCancellation: CancellationTokenSource | undefined;
-	private _serverOptions: ServerOptions;
+	private _serverOptions: CSServerOptions;
 	private _restartCount = 0;
 	private _outputChannel: OutputChannel | undefined;
 
@@ -251,16 +276,26 @@ export class CodeStreamAgentConnection implements Disposable {
 		const env = process.env;
 		const breakOnStart = (env && env.CODESTREAM_AGENT_BREAK_ON_START) === "true";
 
+		const agentEnv = {
+			...process.env,
+			NODE_TLS_REJECT_UNAUTHORIZED: options.disableStrictSSL ? 0 : 1,
+			NODE_EXTRA_CA_CERTS: options.extraCerts
+		};
+
 		this._serverOptions = {
 			run: {
 				module: context.asAbsolutePath("dist/agent.js"),
-				transport: TransportKind.ipc
+				transport: TransportKind.ipc,
+				options: {
+					env: agentEnv
+				}
 			},
 			debug: {
 				module: context.asAbsolutePath("../shared/agent/dist/agent.js"),
 				transport: TransportKind.ipc,
 				options: {
-					execArgv: ["--nolazy", breakOnStart ? "--inspect-brk=6009" : "--inspect=6009"]
+					execArgv: ["--nolazy", breakOnStart ? "--inspect-brk=6009" : "--inspect=6009"],
+					env: agentEnv
 				}
 			}
 		};
@@ -385,9 +420,9 @@ export class CodeStreamAgentConnection implements Disposable {
 		return options;
 	}
 
-	async logout() {
+	async logout(newServerUrl?: string) {
 		await this.stop();
-		await Container.agent.start();
+		await Container.agent.start(newServerUrl);
 	}
 
 	get codemarks() {
@@ -426,9 +461,10 @@ export class CodeStreamAgentConnection implements Disposable {
 			});
 		}
 
-		fetch(uri: Uri) {
+		fetch(uri: Uri, sha?: string) {
 			return this._connection.sendRequest(FetchDocumentMarkersRequestType, {
 				textDocument: { uri: uri.toString() },
+				gitSha: sha,
 				applyFilters: true
 			});
 		}
@@ -651,7 +687,7 @@ export class CodeStreamAgentConnection implements Disposable {
 		}
 
 		getFileContentsAtRevision(
-			repoId: string,
+			repoId: string | undefined,
 			path: string,
 			sha: string
 		): Promise<GetFileContentsAtRevisionResponse> {
@@ -880,10 +916,6 @@ export class CodeStreamAgentConnection implements Disposable {
 			});
 		}
 
-		me() {
-			return this._connection.sendRequest(GetMeRequestType, {});
-		}
-
 		updatePresence(status: CSPresenceStatus) {
 			return this._connection.sendRequest(UpdatePresenceRequestType, {
 				sessionId: Container.session.id!,
@@ -907,6 +939,29 @@ export class CodeStreamAgentConnection implements Disposable {
 
 		preferences() {
 			return this._connection.sendRequest(GetPreferencesRequestType, undefined);
+		}
+	})(this);
+
+	get observability() {
+		return this._observability;
+	}
+	private readonly _observability = new (class {
+		constructor(private readonly _connection: CodeStreamAgentConnection) {}
+
+		getFileLevelTelemetry(
+			filePath: string,
+			languageId: string,
+			resetCache: boolean,
+			locator?: FunctionLocator,
+			options?: FileLevelTelemetryRequestOptions
+		) {
+			return this._connection.sendRequest(GetFileLevelTelemetryRequestType, {
+				filePath,
+				languageId,
+				resetCache,
+				locator,
+				options
+			});
 		}
 	})(this);
 
@@ -981,6 +1036,11 @@ export class CodeStreamAgentConnection implements Disposable {
 		await Container.webview.onServerUrlChanged(e);
 	}
 
+	@log()
+	private async onProcessBufferNotificationChanged(e: DidChangeProcessBufferNotification) {
+		await Container.webview.onProcessBufferChanged(e);
+	}
+
 	@started
 	async sendNotification<NT extends NotificationType<any, any>>(
 		type: NT,
@@ -1035,9 +1095,12 @@ export class CodeStreamAgentConnection implements Disposable {
 	}
 
 	private _starting: Promise<AgentInitializeResult> | undefined;
-	public async start(): Promise<AgentInitializeResult> {
+	public async start(newServerUrl?: string): Promise<AgentInitializeResult> {
 		if (this._client !== undefined || this._starting !== undefined) {
 			throw new Error("Agent has already been started");
+		}
+		if (newServerUrl && this._clientOptions.initializationOptions) {
+			this._clientOptions.initializationOptions.serverUrl = newServerUrl;
 		}
 
 		this._starting = this.startCore();
@@ -1057,11 +1120,57 @@ export class CodeStreamAgentConnection implements Disposable {
 			"CodeStream (Agent)"
 		);
 		this._clientOptions.revealOutputChannelOn = RevealOutputChannelOn.Never;
+
+		const initializationOptions = getInitializationOptions({
+			...this._clientOptions.initializationOptions
+		});
+
+		try {
+			const telemetryOptions = Container.telemetryOptions;
+			if (telemetryOptions) {
+				if (telemetryOptions.error) {
+					Logger.warn("no NewRelic telemetry", { error: telemetryOptions.error });
+				} else if (telemetryOptions.telemetryEndpoint && telemetryOptions.licenseIngestKey) {
+					const newRelicEnvironmentVariables = {
+						NEW_RELIC_HOST: telemetryOptions.telemetryEndpoint,
+						// do not want to release with NEW_RELIC_LOG_ENABLED=true
+						NEW_RELIC_LOG_ENABLED: false,
+						// NEW_RELIC_LOG_LEVEL: "info",
+						NEW_RELIC_APP_NAME: "lsp-agent",
+						NEW_RELIC_LICENSE_KEY: telemetryOptions.licenseIngestKey
+					} as NewRelicEnvironmentVariables;
+
+					this._serverOptions.run.options = this._serverOptions.run.options || process.env;
+					this._serverOptions.run.options.env = {
+						...this._serverOptions.run.options.env,
+						...newRelicEnvironmentVariables
+					};
+
+					this._serverOptions.debug.options = this._serverOptions.debug.options || process.env;
+					this._serverOptions.debug.options.env = {
+						...this._serverOptions.debug.options.env,
+						...newRelicEnvironmentVariables
+					};
+
+					initializationOptions.newRelicTelemetryEnabled = true;
+					Logger.log(
+						`NewRelic telemetry enabled=${initializationOptions.newRelicTelemetryEnabled}`
+					);
+				} else {
+					Logger.warn("no NewRelic telemetry");
+				}
+			} else {
+				Logger.warn("no NewRelic telemetry");
+			}
+		} catch (ex) {
+			Logger.warn(`no NewRelic telemetry - ${ex.message}`);
+		}
+
 		this._client = new LanguageClient(
 			"codestream",
 			"CodeStream",
 			{ ...this._serverOptions } as ServerOptions,
-			{ ...this._clientOptions, initializationOptions: this.getInitializationOptions() }
+			{ ...this._clientOptions, initializationOptions: initializationOptions }
 		);
 
 		this._disposable = this._client.start();
@@ -1102,6 +1211,10 @@ export class CodeStreamAgentConnection implements Disposable {
 			DidChangeApiVersionCompatibilityNotificationType,
 			this.onApiVersionCompatibilityChanged.bind(this)
 		);
+		this._client.onNotification(
+			DidChangeProcessBufferNotificationType,
+			this.onProcessBufferNotificationChanged.bind(this)
+		);
 
 		this._client.onNotification(DidLoginNotificationType, e => this._onDidLogin.fire(e));
 		this._client.onNotification(DidStartLoginNotificationType, () => this._onDidStartLogin.fire());
@@ -1130,8 +1243,29 @@ export class CodeStreamAgentConnection implements Disposable {
 		this._client.onNotification(DidSetEnvironmentNotificationType, e =>
 			this._onDidSetEnvironment.fire(e)
 		);
-
+		this._client.onNotification(DidResolveStackTraceLineNotificationType, e =>
+			this._onDidResolveStackTraceLine.fire(e)
+		);
 		this._client.onRequest(AgentOpenUrlRequestType, e => this._onOpenUrl.fire(e));
+		this._client.onRequest(AgentFileSearchRequestType, async e => {
+			try {
+				const files = await workspace.findFiles(`**/${e.path}`);
+				Logger.log(
+					`AgentFileSearchRequestType: workspace search for **/${e.path} found ${files.length} matches`
+				);
+				return {
+					files: files.map(_ => _.fsPath)
+				};
+			} catch (ex) {
+				Logger.warn("AgentFileSearchRequestType", {
+					path: e ? e.path : "",
+					error: ex
+				});
+				return {
+					files: []
+				};
+			}
+		});
 	}
 
 	private async stop(): Promise<void> {
@@ -1154,6 +1288,64 @@ export class CodeStreamAgentConnection implements Disposable {
 		this._starting = undefined;
 		this._client = undefined;
 	}
+
+	private getHttpsProxyAgent(options: {
+		proxySupport?: string;
+		proxy?: {
+			url: string;
+			strictSSL?: boolean;
+		};
+	}) {
+		let _httpsAgent: HttpsAgent | HttpsProxyAgent | undefined = undefined;
+		const redactProxyPasswdRegex = /(http:\/\/.*:)(.*)(@.*)/gi;
+		if (
+			options.proxySupport === "override" ||
+			(options.proxySupport == null && options.proxy != null)
+		) {
+			if (options.proxy != null) {
+				const redactedUrl = options.proxy.url.replace(redactProxyPasswdRegex, "$1*****$3");
+				Logger.log(
+					`Proxy support is in override with url=${redactedUrl}, strictSSL=${options.proxy.strictSSL}`
+				);
+				_httpsAgent = new HttpsProxyAgent({
+					...url.parse(options.proxy.url),
+					rejectUnauthorized: options.proxy.strictSSL
+				} as any);
+			} else {
+				Logger.log("Proxy support is in override, but no proxy settings were provided");
+			}
+		} else if (options.proxySupport === "on") {
+			const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+			if (proxyUrl) {
+				const strictSSL = options.proxy ? options.proxy.strictSSL : true;
+				const redactedUrl = proxyUrl.replace(redactProxyPasswdRegex, "$1*****$3");
+				Logger.log(`Proxy support is on with url=${redactedUrl}, strictSSL=${strictSSL}`);
+
+				let proxyUri;
+				try {
+					proxyUri = url.parse(proxyUrl);
+				} catch {}
+
+				if (proxyUri) {
+					_httpsAgent = new HttpsProxyAgent({
+						...proxyUri,
+						rejectUnauthorized: options.proxy ? options.proxy.strictSSL : true
+					} as any);
+				}
+			} else {
+				Logger.log("Proxy support is on, but no proxy url was found");
+			}
+		} else {
+			Logger.log("Proxy support is off");
+		}
+		return _httpsAgent;
+	}
+
+	public setServerUrl(url: string) {
+		if (this._clientOptions.initializationOptions) {
+			this._clientOptions.initializationOptions.serverUrl = url;
+		}
+	}
 }
 
 function started(target: CodeStreamAgentConnection, propertyName: string, descriptor: any) {
@@ -1170,4 +1362,12 @@ function started(target: CodeStreamAgentConnection, propertyName: string, descri
 			return get!.apply(this, args);
 		};
 	}
+}
+
+interface NewRelicEnvironmentVariables {
+	NEW_RELIC_HOST: string;
+	NEW_RELIC_LOG_ENABLED?: boolean;
+	NEW_RELIC_LOG_LEVEL?: "info";
+	NEW_RELIC_APP_NAME: "lsp-agent";
+	NEW_RELIC_LICENSE_KEY: string;
 }

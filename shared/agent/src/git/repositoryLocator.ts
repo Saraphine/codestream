@@ -61,7 +61,7 @@ export class RepositoryLocator {
 						true
 					);
 
-					Logger.log(`startCore: found ${repositories.length} repositories in ${folder}`);
+					Logger.log(`startCore: found ${repositories.length} repositories in ${folder.uri}`);
 					allAddedRepositories = [...allAddedRepositories, ...repositories];
 				}
 

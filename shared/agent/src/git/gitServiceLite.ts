@@ -216,7 +216,7 @@ export class GitServiceLite {
 			if (wslMntMatch != null) {
 				// wsl git + windows folder perceived as /mnt/c/...
 				const [, drive, rest] = wslMntMatch;
-				const windowsPath = drive.toUpperCase() + ":" + rest;
+				const windowsPath = `${drive.toUpperCase()}:${rest}`;
 				const normalized = Strings.normalizePath(windowsPath.trim());
 				Logger.debug(`Windows path (with WSL git) normalized: ${path} -> ${normalized}`);
 				return normalized;

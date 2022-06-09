@@ -127,7 +127,7 @@ class Post extends React.Component {
 				return (
 					<span>
 						{message}{" "}
-						<a href="https://help.codestream.com/hc/en-us/articles/360013410551">{learnMore}</a>
+						<a href="https://docs.newrelic.com/docs/codestream/troubleshooting/git-issues/#repo-doesnt-have-a-remote-url">{learnMore}</a>
 					</span>
 				);
 			}

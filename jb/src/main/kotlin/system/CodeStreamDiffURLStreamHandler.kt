@@ -15,7 +15,7 @@ object CodeStreamDiffURLStreamHandler {
         // CS review diffs use codestream-diff schema. This registration
         // is necessary otherwise URL constructor will throw an exception.
         URL.setURLStreamHandlerFactory { protocol ->
-            if ("codestream-diff" == protocol) object : URLStreamHandler() {
+            if (protocol in arrayOf("vcs", "codestream-diff")) object : URLStreamHandler() {
                 @Throws(IOException::class)
                 override fun openConnection(url: URL?): URLConnection? {
                     return object : URLConnection(url) {
@@ -28,5 +28,4 @@ object CodeStreamDiffURLStreamHandler {
             } else null
         }
     }
-
 }

@@ -2,7 +2,8 @@
 const webpack = require("webpack");
 const fs = require("fs");
 const path = require("path");
-const CleanPlugin = require("clean-webpack-plugin");
+const { CleanWebpackPlugin } = require("clean-webpack-plugin");
+const FileManagerPlugin = require("filemanager-webpack-plugin");
 const ForkTsCheckerPlugin = require("fork-ts-checker-webpack-plugin");
 const HtmlPlugin = require("html-webpack-plugin");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
@@ -10,15 +11,91 @@ const TerserPlugin = require("terser-webpack-plugin");
 const TsconfigPathsPlugin = require("tsconfig-paths-webpack-plugin");
 const BundleAnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin;
 
+class CompileStatsPlugin {
+	constructor(env) {
+		this.enabled = !env.production;
+	}
+	total = 0;
+	count = 0;
+	since = Date.now();
+
+	deserialize() {
+		if (!fs.existsSync("./stats.json")) {
+			return;
+		}
+		try {
+			const dataStr = fs.readFileSync("./stats.json", { encoding: "utf8" });
+			const data = JSON.parse(dataStr);
+			this.total = data.total;
+			this.count = data.count;
+			this.since = data.since;
+		} catch (e) {
+			// ignore
+		}
+	}
+
+	serialize() {
+		fs.writeFileSync(
+			"./stats.json",
+			JSON.stringify({ count: this.count, total: this.total, since: this.since }, null, 2),
+			{ encoding: "utf8" }
+		);
+	}
+
+	timeSpan(ms) {
+		let day, hour, minute, seconds;
+		seconds = Math.floor(ms / 1000);
+		minute = Math.floor(seconds / 60);
+		seconds = seconds % 60;
+		hour = Math.floor(minute / 60);
+		minute = minute % 60;
+		day = Math.floor(hour / 24);
+		hour = hour % 24;
+		return {
+			day,
+			hour,
+			minute,
+			seconds
+		};
+	}
+
+	done(stats) {
+		const elapsed = stats.endTime - stats.startTime;
+		this.total += elapsed;
+		this.count++;
+		const { day, hour, minute, seconds } = this.timeSpan(this.total);
+		const totalTime = `${day}d ${hour}h ${minute}m ${seconds}s`;
+		this.serialize();
+		const sinceStr = new Date(this.since).toLocaleString();
+		// nextTick to make stats is last line after webpack logs
+		process.nextTick(() =>
+			console.info(
+				`⌛ compileTime: ${elapsed}ms, compilCount: ${this.count}, totalCompileTime: ${totalTime}, since: ${sinceStr}`
+			)
+		);
+	}
+
+	apply(compiler) {
+		if (this.enabled) {
+			this.deserialize();
+			compiler.hooks.done.tap("done", this.done.bind(this));
+		}
+	}
+}
+
 module.exports = function(env, argv) {
 	env = env || {};
 	env.analyzeBundle = Boolean(env.analyzeBundle);
 	env.production = env.analyzeBundle || Boolean(env.production);
 	env.reset = Boolean(env.reset);
 	env.watch = Boolean(argv.watch || argv.w);
+	const mode = env.production ? "production" : "development";
+
+	console.log(JSON.stringify({ mode, ...env }, null, 4));
 
 	let protocolPath = path.resolve(__dirname, "src/protocols");
 	if (!fs.existsSync(protocolPath)) {
+		console.warn("Creating protocol folder...");
 		fs.mkdirSync(protocolPath);
 	}
 
@@ -51,11 +128,15 @@ module.exports = function(env, argv) {
 	const context = path.resolve(__dirname, "webview");
 
 	const plugins = [
-		new CleanPlugin(["src/main/resources/webview"]),
+		new CompileStatsPlugin(env),
+		new CleanWebpackPlugin({
+			cleanOnceBeforeBuildPatterns: ["**/*"],
+			verbose: true
+		}),
 		new webpack.DefinePlugin(
 			Object.assign(
 				{ "global.atom": false },
-				env.production ? { "process.env.NODE_ENV": JSON.stringify("production") } : {}
+				mode === "production" ? { "process.env.NODE_ENV": JSON.stringify("production") } : {}
 			)
 		),
 		new MiniCssExtractPlugin({
@@ -63,47 +144,42 @@ module.exports = function(env, argv) {
 		}),
 		new HtmlPlugin({
 			template: "index.html",
-			filename: "webview.html",
+			filename: "webview-template.html",
 			inject: true,
-			minify: env.production
-				? {
-						removeComments: true,
-						collapseWhitespace: true,
-						removeRedundantAttributes: true,
-						useShortDoctype: true,
-						removeEmptyAttributes: true,
-						removeStyleLinkTypeAttributes: true,
-						keepClosingSlash: true
-				  }
-				: false
+			minify:
+				mode === "production"
+					? {
+							removeComments: true,
+							collapseWhitespace: true,
+							removeRedundantAttributes: true,
+							useShortDoctype: true,
+							removeEmptyAttributes: true,
+							removeStyleLinkTypeAttributes: true,
+							keepClosingSlash: true
+					  }
+					: false
 		}),
 		new ForkTsCheckerPlugin({
-			async: false,
-			useTypescriptIncrementalApi: false
+			async: false
+		}),
+		new FileManagerPlugin({
+			events: {
+				onEnd: [
+					{
+						copy: [
+							{
+								source: path.resolve(__dirname, "../shared/ui/newrelic-browser.js"),
+								destination: `${__dirname}/src/main/resources/webview/`
+							}
+						]
+					}
+				]
+			}
 		})
 	];
 
 	if (env.analyzeBundle) {
 		plugins.push(new BundleAnalyzerPlugin());
-	}
-
-	if (env.production) {
-		plugins.push(
-			new TerserPlugin({
-				cache: true,
-				parallel: true,
-				sourceMap: true,
-				terserOptions: {
-					ecma: 8,
-					// Keep the class names otherwise @log won't provide a useful name
-					keep_classnames: true,
-					module: true,
-					compress: {
-						pure_funcs: ["console.warn"]
-					}
-				}
-			})
-		);
 	}
 
 	return {
@@ -121,13 +197,18 @@ module.exports = function(env, argv) {
 			publicPath: "./"
 		},
 		optimization: {
+			minimize: true,
 			minimizer: [
 				new TerserPlugin({
-					cache: true,
 					parallel: true,
-					sourceMap: true,
 					terserOptions: {
-						ecma: 8
+						ecma: 8,
+						// Keep the class names otherwise @log won't provide a useful name
+						keep_classnames: true,
+						module: true,
+						compress: {
+							pure_funcs: ["console.warn"]
+						}
 					}
 				})
 			],
@@ -151,7 +232,12 @@ module.exports = function(env, argv) {
 				},
 				{
 					test: /\.(js|ts)x?$/,
-					use: "babel-loader",
+					use: {
+						loader: "babel-loader",
+						options: {
+							plugins: ["babel-plugin-styled-components"]
+						}
+					},
 					exclude: /node_modules/
 				},
 				{
@@ -223,7 +309,7 @@ module.exports = function(env, argv) {
 
 function createFolderSymlinkSync(source, target, env) {
 	if (env.reset) {
-		console.log("Unlinking symlink...");
+		console.log("Unlinking symlink... (env.reset)");
 		try {
 			fs.unlinkSync(target);
 		} catch (ex) {}
@@ -231,15 +317,18 @@ function createFolderSymlinkSync(source, target, env) {
 		return;
 	}
 
-	console.log("Creating symlink...");
+	console.log("Creating symlink...", source, target);
 	try {
 		fs.symlinkSync(source, target, "dir");
 	} catch (ex) {
+		console.log(`Symlink creation failed; ${ex}`);
 		try {
 			fs.unlinkSync(target);
 			fs.symlinkSync(source, target, "dir");
 		} catch (ex) {
 			console.log(`Symlink creation failed; ${ex}`);
+			console.warn("Are you running this as an adminstrator?");
 		}
 	}
+	console.log("\n");
 }

@@ -18,11 +18,15 @@ const val URI_FILE_BEGIN = "file:"
 const val WINDOWS_NETWORK_FILE_BEGIN = "file:////"
 const val URI_PATH_SEP: Char = '/'
 const val URI_VALID_FILE_BEGIN: String = "file:///"
+const val VCS_FILE_BEGIN = "vcs:/"
 
-fun sanitizeURI(uri: String?): String? {
-    if (uri == null) {
-        return null
+fun sanitizeURI(_uri: String?): String? {
+    var uri = _uri ?: return null
+
+    if (uri.startsWith(VCS_FILE_BEGIN)) {
+        uri = uri.replace(VCS_FILE_BEGIN, URI_VALID_FILE_BEGIN)
     }
+
     if (uri.startsWith(WINDOWS_NETWORK_FILE_BEGIN)) {
         return uri.replace("file:////", "file://")
     } else if (!uri.startsWith(URI_FILE_BEGIN)) {

@@ -1,0 +1,40 @@
+"use strict";
+
+import * as StackTraceParser from "stacktrace-parser";
+import { CSStackTraceInfo } from "../../protocol/api.protocol.models";
+import { Strings } from "../../system";
+
+export function Parser(stack: string): CSStackTraceInfo {
+	const info: CSStackTraceInfo = { text: stack, lines: [] };
+	const firstLine = stack.split("\n")[0];
+	const match = firstLine.match(/Error: (.*)$/);
+	if (match && match[1]) {
+		info.header = firstLine;
+		info.error = match[1];
+	}
+
+	const parsed = StackTraceParser.parse(stack);
+	info.lines = parsed.map(line => {
+		let fileFullPath = line.file ? line.file : undefined;
+		if (fileFullPath) {
+			fileFullPath = Strings.trimEnd(fileFullPath, "?");
+			if (fileFullPath.indexOf("webpack:///") === 0) {
+				fileFullPath = fileFullPath.replace("webpack:///", "");
+			}
+			fileFullPath = Strings.trimStart(fileFullPath, ".");
+			const questionIndex = fileFullPath.indexOf("?");
+			if (questionIndex > -1) {
+				fileFullPath = fileFullPath.slice(0, questionIndex);
+			}
+		}
+		return {
+			fileFullPath: fileFullPath,
+			method: line.methodName,
+			arguments: line.arguments,
+			line: line.lineNumber === null ? undefined : line.lineNumber,
+			column: line.column === null ? undefined : line.column
+		};
+	});
+
+	return info;
+}

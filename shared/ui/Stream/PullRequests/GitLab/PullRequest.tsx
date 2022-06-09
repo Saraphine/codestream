@@ -61,7 +61,7 @@ import { PullRequestBottomComment } from "../../PullRequestBottomComment";
 import { GetReposScmResponse } from "../../../protocols/agent/agent.protocol";
 import { PRHeadshotName } from "@codestream/webview/src/components/HeadshotName";
 import { PRHeadshot } from "@codestream/webview/src/components/Headshot";
-import { DropdownButton } from "../../Review/DropdownButton";
+import { DropdownButton } from "../../DropdownButton";
 import { ApproveBox } from "./ApproveBox";
 import { MergeBox } from "./MergeBox";
 import { ReactAndDisplayOptions } from "./ReactAndDisplayOptions";
@@ -288,6 +288,8 @@ let insertText;
 let insertNewline;
 let focusOnMessageInput;
 
+const GL_404_HELP = "https://docs.newrelic.com/docs/codestream/troubleshooting/reverse-proxy";
+
 export const PullRequest = () => {
 	const dispatch = useDispatch();
 	const derivedState = useSelector((state: CodeStreamState) => {
@@ -315,6 +317,10 @@ export const PullRequest = () => {
 				: undefined,
 			currentPullRequest: currentPullRequest,
 			currentPullRequestLastUpdated: providerPullRequestLastUpdated,
+			previousPullRequestView: state.context.currentPullRequest
+				? state.context.currentPullRequest.previousView
+				: undefined,
+			isVsIde: state.ide.name === "VS",
 			composeCodemarkActive: state.context.composeCodemarkActive,
 			team,
 			textEditorUri: state.editorContext.textEditorUri,
@@ -330,6 +336,7 @@ export const PullRequest = () => {
 	const [isLoadingMessage, setIsLoadingMessage] = useState("");
 	const [generalError, setGeneralError] = useState("");
 	const [collapseAll, setCollapseAll] = useState(false);
+	const [oneLayerModal, setOneLayerModal] = useState(false);
 
 	const [rightOpen, setRightOpen] = useState(false);
 	const [openRepos, setOpenRepos] = useState<any[]>(EMPTY_ARRAY);
@@ -353,8 +360,14 @@ export const PullRequest = () => {
 	const closeFileComments = () => {
 		// note we're passing no value for the 3rd argument, which clears
 		// the commentId
+		// if (pr) dispatch(setCurrentPullRequest(pr.providerId, pr.idComputed));
+		if (oneLayerModal && pr) {
+			dispatch(setCurrentPullRequest(pr.providerId, pr.idComputed, "", "", "sidebar-diffs"));
+		}
 
-		if (pr) dispatch(setCurrentPullRequest(pr.providerId, pr.idComputed));
+		if (!oneLayerModal && pr) {
+			dispatch(setCurrentPullRequest(pr.providerId, pr.idComputed, "", "", "details"));
+		}
 	};
 
 	const _assignState = _pr => {
@@ -393,14 +406,17 @@ export const PullRequest = () => {
 		if (!derivedState.reviewsStateBootstrapped) {
 			dispatch(bootstrapReviews());
 		}
+		if (
+			derivedState.currentPullRequestCommentId &&
+			!derivedState.composeCodemarkActive &&
+			derivedState.previousPullRequestView === "sidebar-diffs"
+		) {
+			setOneLayerModal(true);
+		}
+
 		let _didChangeDataNotification;
 		getOpenRepos();
 		initialFetch().then((_: GitLabMergeRequestWrapper | undefined) => {
-			HostApi.instance.track("PR Details Viewed", {
-				Host: derivedState.currentPullRequestProviderId,
-				"Host Version": _?.project?.mergeRequest?.supports?.version?.version || "0.0.0"
-			});
-
 			_didChangeDataNotification = HostApi.instance.on(DidChangeDataNotificationType, (e: any) => {
 				if (e.type === ChangeDataType.Commits) {
 					reload("Updating...");
@@ -595,7 +611,7 @@ export const PullRequest = () => {
 	})();
 
 	const toggleWorkInProgress = async () => {
-		const onOff = !pr.workInProgress;
+		const onOff = !pr.isDraft;
 		setIsLoadingMessage(onOff ? "Marking as draft..." : "Marking as ready...");
 		await dispatch(
 			api("setWorkInProgressOnPullRequest", {
@@ -621,8 +637,6 @@ export const PullRequest = () => {
 
 	const { order, filter } = derivedState;
 
-	console.warn("PR: ", pr);
-
 	if (!pr) {
 		return (
 			<div
@@ -638,11 +652,17 @@ export const PullRequest = () => {
 				</div>
 				{generalError && (
 					<ErrorMessage>
-						Error Loading Pull Request:
+						Error Loading Merge Request:
 						<br />
 						<div style={{ overflow: "auto", width: "100%", height: "7vh" }}>
 							{generalError.replace(/\\t/g, "     ").replace(/\\n/g, "")}
 						</div>
+						{generalError.includes("404 Project Not Found") && (
+							<div>
+								Using apache2 reverse proxy? Click <Link href={GL_404_HELP}>here</Link> for a
+								possible solution.
+							</div>
+						)}
 					</ErrorMessage>
 				)}
 				{!generalError && <LoadingMessage>Loading Merge Request...</LoadingMessage>}
@@ -672,6 +692,24 @@ export const PullRequest = () => {
 			HostApi.instance.send(OpenUrlRequestType, { url });
 		}
 	};
+
+	if (oneLayerModal) {
+		return (
+			<ThemeProvider theme={addViewPreferencesToTheme}>
+				<PullRequestRoot className="panel full-height">
+					<CreateCodemarkIcons narrow onebutton />
+					<PullRequestFileComments
+						pr={pr}
+						setIsLoadingMessage={setIsLoadingMessage}
+						commentId={derivedState.currentPullRequestCommentId}
+						quote={() => {}}
+						onClose={closeFileComments}
+						prCommitsRange={prCommitsRange}
+					/>
+				</PullRequestRoot>
+			</ThemeProvider>
+		);
+	}
 
 	return (
 		<ThemeProvider theme={addViewPreferencesToTheme}>
@@ -762,7 +800,7 @@ export const PullRequest = () => {
 											items={[
 												{ label: "Edit", key: "edit", action: edit },
 												{
-													label: pr.workInProgress ? "Mark as ready" : "Mark as draft",
+													label: pr.isDraft ? "Mark as ready" : "Mark as draft",
 													key: "draft",
 													action: () => toggleWorkInProgress()
 												},
@@ -783,7 +821,7 @@ export const PullRequest = () => {
 						)}
 						<PRTitle>
 							{pr.title}{" "}
-							<Tooltip title="Open on GitLab" placement="top">
+							<Tooltip title="Open on GitLab" placement="top" delay={1}>
 								<span>
 									<Link href={pr.webUrl}>
 										!{pr.number}
@@ -826,16 +864,19 @@ export const PullRequest = () => {
 									<PRBadge>{(pr && pr.commitCount) || 0}</PRBadge>
 								</InlineIcon>
 							</Tab>
-							<Tab onClick={e => setActiveTab(4)} active={activeTab == 4}>
-								<InlineIcon>
-									<Icon className="narrow-text" name="plus-minus" />
-									<span className="wide-text">Changes</span>
-									<PRBadge>
-										{(pr && pr.changesCount) || 0}
-										{pr && pr.overflow ? "+" : ""}
-									</PRBadge>
-								</InlineIcon>
-							</Tab>
+							{derivedState.isVsIde && (
+								<Tab onClick={e => setActiveTab(4)} active={activeTab == 4}>
+									<InlineIcon>
+										<Icon className="narrow-text" name="plus-minus" />
+										<span className="wide-text">Changes</span>
+										<PRBadge>
+											{(pr && pr.changesCount) || 0}
+											{pr && pr.overflow ? "+" : ""}
+										</PRBadge>
+									</InlineIcon>
+								</Tab>
+							)}
+
 							{pr.pendingReview ? (
 								<PRSubmitReviewButton style={{ margin: "-10px 0 7px auto" }}>
 									<Button variant="success" onClick={() => setFinishReviewOpen(!finishReviewOpen)}>

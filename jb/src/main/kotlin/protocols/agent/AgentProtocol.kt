@@ -6,15 +6,19 @@ import com.google.gson.JsonObject
 import com.google.gson.annotations.SerializedName
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationNamesInfo
+import com.intellij.util.io.HttpRequests
+import org.apache.commons.codec.digest.DigestUtils
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.WorkspaceFolder
+import javax.swing.Icon
+import javax.swing.ImageIcon
 
 class ProxySettings(val url: String, val strictSSL: Boolean)
 
 class InitializationOptions(
     val extension: Extension,
-    val ide: Ide,
+    val ide: IdeClass,
     val isDebugging: Boolean,
     val proxy: ProxySettings?,
     val proxySupport: String?,
@@ -23,13 +27,13 @@ class InitializationOptions(
     val traceLevel: String,
     val gitPath: String?,
     val workspaceFolders: Set<WorkspaceFolder>,
+    val newRelicTelemetryEnabled : Boolean?,
     val recordRequests: Boolean = RECORD_REQUESTS
 )
 
 class LoginWithTokenParams(
     val token: JsonElement,
-    val teamId: String?,
-    val team: String?
+    val teamId: String?
 )
 
 class LoginResult(
@@ -42,15 +46,20 @@ class LoginResult(
         get() = loginResponse?.teams?.find { it.id == state?.teamId }
             ?: throw IllegalStateException("User's teams does not contain their own team")
 
+    val company: CSCompany
+        get() = loginResponse?.companies?.find { it.id == team.companyId }
+            ?: throw IllegalStateException("User's companies does not contain their own company")
+
     val userLoggedIn: UserLoggedIn
         get() = loginResponse?.let {
-            return UserLoggedIn(it.user, team, state!!, it.teams.size)
+            return UserLoggedIn(it.user, team, company, state!!, it.teams.size, it.companies.size)
         } ?: throw IllegalStateException("LoginResult has no loginResponse")
 }
 
 class LoginResponse(
     val user: CSUser,
     val teams: List<CSTeam>,
+    val companies: List<CSCompany>,
     val accessToken: String
 )
 
@@ -64,17 +73,51 @@ class LoginState(
     val token: JsonObject?
 )
 
-class UserLoggedIn(val user: CSUser, val team: CSTeam, val state: LoginState, val teamsCount: Int) {
+class UserLoggedIn(
+    val user: CSUser,
+    val team: CSTeam,
+    val company: CSCompany,
+    val state: LoginState,
+    val teamsCount: Int,
+    val companiesCount: Int
+) {
     val userId get() = state.userId
     val teamId get() = state.teamId
+
+    val avatarIcon: Icon? by lazy {
+        try {
+            val email = user.email
+            val emailHash: String = DigestUtils.md5Hex(email.toLowerCase().trim())
+            val size = 20
+            val avatarUrl = "https://www.gravatar.com/avatar/$emailHash.png?s=$size&d=identicon"
+            val bytes: ByteArray = HttpRequests.request(avatarUrl).readBytes(null)
+            ImageIcon(bytes)
+        } catch(ignore: Exception) {
+            null
+        }
+    }
 }
 
-class EnvironmentInfo(val environment: String, val isOnPrem: Boolean, val isProductionCloud: Boolean)
+
+class EnvironmentHost(
+    val name: String,
+    val publicApiUrl: String,
+    val shortName: String
+)
+class EnvironmentInfo(
+    val environment: String,
+    val isOnPrem: Boolean,
+    val isProductionCloud: Boolean,
+    val newRelicLandingServiceUrl: String,
+    val newRelicApiUrl: String,
+    val environmentHosts: List<EnvironmentHost>
+)
 
 class CSUser(
     val id: String,
     val username: String,
     val email: String,
+    val fullName: String,
     var preferences: CSPreferences?
 ) {
     fun wantsToastNotifications(): Boolean = when (preferences?.notificationDelivery) {
@@ -100,8 +143,20 @@ class CSPreferences(
 
 class CSTeam(
     val id: String,
+    val companyId: String,
     val name: String,
     val providerInfo: ProviderInfo?
+)
+
+class CSCompany(
+    val id: String,
+    val name: String
+)
+
+class CSRepo(
+    val id: String,
+    val name: String,
+    val remote: String
 )
 
 class ProviderInfo(
@@ -119,10 +174,14 @@ class Extension(val versionFormatted: String) {
     }
 }
 
-class Ide {
+val Ide = IdeClass()
+
+// it needs to be a class rather than an object otherwise the values are
+// not properly serialized
+class IdeClass {
     val name = "JetBrains"
-    val version: String = ApplicationInfo.getInstance().fullVersion
-    var detail: String = ApplicationNamesInfo.getInstance().fullProductNameWithEdition
+    val version = ApplicationInfo.getInstance().fullVersion
+    val detail = ApplicationNamesInfo.getInstance().fullProductNameWithEdition
 }
 
 enum class TraceLevel(val value: String) {
@@ -136,7 +195,7 @@ class ReviewCoverageParams(val textDocument: TextDocument)
 
 class ReviewCoverageResult(val reviewIds: List<String?>)
 
-class DocumentMarkersParams(val textDocument: TextDocument, val applyFilters: Boolean)
+class DocumentMarkersParams(val textDocument: TextDocument, val gitSha: String?, val applyFilters: Boolean)
 
 class DocumentMarkersResult(val markers: List<DocumentMarker>, val markersNotLocated: Any)
 
@@ -251,7 +310,8 @@ class TelemetryResult()
 
 class SetServerUrlParams(
     val serverUrl: String,
-    val disableStrictSSL: Boolean = false
+    val disableStrictSSL: Boolean = false,
+    val environment: String
 )
 
 class SetServerUrlResult
@@ -296,6 +356,7 @@ class Post(
 
 class Review(
     val id: String,
+    val postId: String,
     val title: String,
     val followerIds: List<String>?,
     val reviewChangesets: List<ReviewChangeset>
@@ -333,8 +394,10 @@ class Stream(
 enum class StreamType {
     @SerializedName("channel")
     CHANNEL,
+
     @SerializedName("direct")
     DIRECT,
+
     @SerializedName("file")
     FILE
 }
@@ -346,6 +409,8 @@ class GetStreamParams(
 class GetUserParams(
     val userId: String
 )
+
+class GetUsersParams()
 
 class GetPostParams(
     val streamId: String,
@@ -362,7 +427,7 @@ class getPullRequestFilesParams(
     val params: getPullRequestFilesChangedParams
 )
 
-class PullRequestFile (
+class PullRequestFile(
     val sha: String,
     val previousFilename: String?,
     val filename: String,
@@ -373,13 +438,25 @@ class PullRequestFile (
     val patch: String?
 )
 
+class ExecuteThirdPartyRequestParams(
+    val method: String,
+    val providerId: String,
+    val params: ThirdPartyRequestParams
+)
+
+interface ThirdPartyRequestParams
+
+class GetPullRequestReviewIdParams(
+    val pullRequestId: String
+) : ThirdPartyRequestParams
+
 class Marker(
     val id: String,
     val code: String
 )
 
 class GetFileContentsAtRevisionParams(
-    val repoId: String,
+    val repoId: String?,
     val path: String,
     val sha: String
 )
@@ -404,3 +481,247 @@ class FollowReviewParams(
 )
 
 class FollowReviewResult()
+
+class ResolveStackTraceLineParams(
+    val rawLine: String,
+    val repoRemote: String,
+    val sha: String
+)
+
+class ResolveStackTraceLineResult(
+    val repoId: String?,
+    val fileRelativePath: String?,
+    val fileFullPath: String?,
+    val line: Int?,
+    val column: Int?,
+    val error: String?
+)
+
+class PixieDynamicLoggingParams(
+    val functionName: String,
+    val functionParameters: List<PixieDynamicLoggingFunctionParameter>,
+    val functionReceiver: String?,
+    val packageName: String,
+    val upid: String
+)
+
+class PixieDynamicLoggingFunctionParameter(
+    val name: String,
+    val type: String
+)
+
+class PixieDynamicLoggingResult(
+    val id: String
+)
+
+class PixieDynamicLoggingEvent(
+    val id: String,
+    val metaData: List<String>?,
+    val data: List<Map<String, String>>?,
+    val error: String?,
+    val status: String,
+    val done: Boolean
+)
+
+class FileLevelTelemetryOptions(
+    val includeThroughput: Boolean?,
+    val includeAverageDuration: Boolean?,
+    val includeErrorRate: Boolean?
+)
+
+class FunctionLocator(
+    val namespace: String?,
+    val functionName: String?
+)
+
+class FileLevelTelemetryParams(
+    val filePath: String?,
+    val languageId: String,
+    val locator: FunctionLocator,
+    val newRelicAccountId: Int?,
+    val newRelicEntityGuid: String?,
+    val resetCache: Boolean?,
+    val options: FileLevelTelemetryOptions?
+)
+
+data class MethodLevelTelemetrySymbolIdentifier(
+    val namespace: String?,
+    val className: String?,
+    val functionName: String
+)
+
+open class MethodLevelTelemetryData(
+    val namespace: String?,
+    val className: String?,
+    val functionName: String,
+    val metricTimesliceName: String
+) {
+    val symbolIdentifier: MethodLevelTelemetrySymbolIdentifier
+        get() = MethodLevelTelemetrySymbolIdentifier(namespace, className, functionName)
+}
+
+class MethodLevelTelemetryThroughput (
+    namespace: String?,
+    className: String?,
+    functionName: String,
+    metricTimesliceName: String,
+    val requestsPerMinute: Float
+) : MethodLevelTelemetryData(namespace, className, functionName, metricTimesliceName)
+
+class MethodLevelTelemetryAverageDuration(
+    namespace: String?,
+    className: String?,
+    functionName: String,
+    metricTimesliceName: String,
+    val averageDuration: Float
+) : MethodLevelTelemetryData(namespace, className, functionName, metricTimesliceName)
+
+class MethodLevelTelemetryErrorRate(
+    namespace: String?,
+    className: String?,
+    functionName: String,
+    metricTimesliceName: String,
+    val errorsPerMinute: Float
+) : MethodLevelTelemetryData(namespace, className, functionName, metricTimesliceName)
+
+class FileLevelTelemetryResult(
+    var error: FileLevelTelemetryResultError?,
+    val repo: CSRepo,
+    val throughput: List<MethodLevelTelemetryThroughput>?,
+    val averageDuration: List<MethodLevelTelemetryAverageDuration>?,
+    val errorRate: List<MethodLevelTelemetryErrorRate>?,
+    val lastUpdateDate: Int?,
+    val hasAnyData: Int?,
+    val sinceDateFormatted: String?,
+    val newRelicAccountId: Int?,
+    val newRelicEntityGuid: String?,
+    val newRelicEntityName: String?,
+    val newRelicUrl: String?,
+    // val newRelicEntityAccounts: EntityAccount[];
+    val codeNamespace: String?,
+    val relativeFilePath: String?
+)
+
+class FileLevelTelemetryResultError(
+    val type: String
+)
+
+class ScmRangeInfoParams(
+    val uri: String,
+    val range: Range
+)
+
+class ScmRangeInfoResult(
+    val uri: String,
+    val range: Range,
+    val contents: String,
+    val scm: ScmRangeInfoResultScm?,
+    val error: String?,
+    val context: JsonObject?,
+    val ignored: Boolean?,
+// context?: {
+//     pullRequest?: {
+//         id: string;
+//         providerId: string;
+//         pullRequestReviewId?: string;
+//     };
+)
+
+class ScmRangeInfoResultScm(
+    val file: String,
+    val repoPath: String,
+    val repoId: String?,
+    val revision: String?,
+    val fixedGitSha: Boolean?,
+    val authors: List<BlameAuthor>,
+    val remotes: List<GitRemote>,
+    val branch: String?
+)
+class BlameAuthor()
+class GitRemote(
+    val name: String,
+    val url: String
+)
+
+class ScmSha1RangesParams(
+    val repoId: String,
+    val filePath: String,
+    val baseSha: String,
+    val headSha: String
+)
+
+class ScmSha1RangesResult(
+    val baseLinesChanged: ScmSha1RangesResultLinesChanged,
+    val headLinesChanged: ScmSha1RangesResultLinesChanged
+)
+
+class ScmSha1RangesResultLinesChanged(
+    val start: Int,
+    val end: Int
+)
+
+class CreateShareableCodemarkParams(
+    val attributes: ShareableCodemarkAttributes,
+    val parentPostId: String?,
+    val memberIds: List<String>,
+    val textDocuments: List<TextDocumentIdentifier>?,
+    val entryPoint: String?,
+    val mentionedUserIds: List<String>?,
+    val addedUsers: List<String>?,
+    // files?: Attachment[];
+    // parentPostId?: string;
+    // isPseudoCodemark?: boolean;
+    // /**
+    //  * true, if this "comment" is part of a PR provider review, rather than a single comment
+    //  */
+    val isProviderReview: Boolean?,
+    // /**
+    //  * the possible reviewId of
+    //  */
+    // pullRequestReviewId?: string;
+    val ideName: String?
+)
+
+class ShareableCodemarkAttributes(
+    // providerType?: ProviderType | undefined;
+    val type: String, // TODO CodemarkType,
+    val text: String?,
+    // streamId?: string;
+    // postId?: string;
+    val parentPostId: String?,
+    // status?: string;
+    // title?: string;
+    // assignees?: string[];
+    // tags?: string[];
+    val remotes: List<String>?,
+    // externalProvider?: string;
+    // externalProviderUrl?: string;
+    // externalProviderHost?: string;
+    // externalAssignees?: { displayName: string; email?: string }[];
+    // remoteCodeUrl?: { name: string; url: string };
+    // threadUrl?: string;
+    // createPermalink?: false | "public" | "private";
+    // relatedCodemarkIds?: string[];
+
+    val codeBlocks: List<ScmRangeInfoResult>
+    // crossPostIssueValues?: CrossPostIssueValues;
+)
+
+class CreateShareableCodemarkResult(
+    val pullRequest: JsonObject?,
+    val directives: JsonObject?
+)
+
+class ReportMessageParams(
+    val type: String,
+    val error: ReportMessageRequestError?,
+    val message: String?,
+    val source: String,
+    val extra: Any?
+)
+
+class ReportMessageRequestError(
+    val message: String,
+    val stack: Any
+)
+

@@ -6,6 +6,7 @@ import com.codestream.system.sanitizeURI
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.module.impl.scopes.ModuleWithDependenciesScope
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.rootManager
 import org.eclipse.lsp4j.WorkspaceFolder
 import java.io.File
 import java.net.URL
@@ -15,10 +16,9 @@ val Project.workspaceFolders: Set<WorkspaceFolder>
         var folders = mutableSetOf(baseWorkspaceFolder)
         val moduleManager = getComponent(ModuleManager::class.java)
         for (module in moduleManager.modules) {
-            val roots = (module.moduleContentScope as? ModuleWithDependenciesScope)?.roots ?: continue
-            val moduleFolders = roots.map {
-                WorkspaceFolder(it.uri)
-            }
+            val moduleFolders = module.rootManager.contentRoots
+                .filter { it.isDirectory && it.uri != null }
+                .map { WorkspaceFolder(it.uri) }
             folders.addAll(moduleFolders)
         }
         return folders

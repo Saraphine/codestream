@@ -19,12 +19,7 @@ import {
 	CSUpdateReviewRequest,
 	CSUpdateReviewResponse
 } from "./api.protocol";
-import {
-	CSReviewChangeset,
-	CSReviewDiffs,
-	CSReviewStatus,
-	ReviewChangesetFileInfo
-} from "./api.protocol.models";
+import { CSReviewDiffs } from "./api.protocol.models";
 
 export interface ReviewPlus extends CSReview {}
 
@@ -83,12 +78,12 @@ export const CreateShareableReviewRequestType = new RequestType<
 export interface FetchReviewsRequest {
 	reviewIds?: string[];
 	streamId?: string;
+	streamIds?: string[];
 	before?: number;
 	byLastAcivityAt?: boolean;
 }
 
-// TODO: when the server starts returning the markers, this response should have ReviewPlus objects
-export type FetchReviewsResponse = Pick<CSGetReviewsResponse, "reviews">;
+export type FetchReviewsResponse = CSGetReviewsResponse;
 
 export const FetchReviewsRequestType = new RequestType<
 	FetchReviewsRequest,
@@ -302,33 +297,6 @@ export const CheckReviewPreconditionsRequestType = new RequestType<
 	void
 >("codestream/review/checkPreconditions");
 
-export interface CheckPullRequestBranchPreconditionsRequest {
-	reviewId?: string; // either a reviewId or repoId need to be passed in
-	repoId?: string;
-	providerId: string;
-	headRefName?: string;
-	baseRefName?: string;
-}
-
-export interface CheckPullRequestBranchPreconditionsResponse {
-	success: boolean;
-	remote?: string;
-	providerId?: string;
-
-	error?: {
-		message?: string;
-		type?: "REPO_NOT_FOUND" | "ALREADY_HAS_PULL_REQUEST" | "UNKNOWN" | "PROVIDER" | string;
-		url?: string;
-	};
-}
-
-export const CheckPullRequestBranchPreconditionsRequestType = new RequestType<
-	CheckPullRequestBranchPreconditionsRequest,
-	CheckPullRequestBranchPreconditionsResponse,
-	void,
-	void
->("codestream/review/pr/branch/checkPreconditions");
-
 export interface CheckPullRequestPreconditionsRequest {
 	reviewId?: string;
 	repoId?: string;
@@ -341,20 +309,62 @@ export interface CheckPullRequestPreconditionsRequest {
 export interface CheckPullRequestPreconditionsResponse {
 	success: boolean;
 	review?: Pick<CSReview, "title" | "text">;
-	repoId?: string;
-	remoteUrl?: string;
-	remoteBranch?: string;
-	providerId?: string;
-	remotes?: any[];
-	origins?: string[];
-	pullRequestProvider?: { defaultBranch?: string; isConnected: boolean };
-	branch?: string;
-	branches?: string[];
-	remoteBranches?: { remote?: string; branch: string }[];
-	pullRequestTemplate?: string;
-	pullRequestTemplateNames?: string[];
-	pullRequestTemplatePath?: string;
-	commitsBehindOriginHeadBranch?: string;
+	/**
+	 * CodeStream repo data
+	 */
+	repo?: {
+		/** CodeStream repo Id */
+		id?: string;
+		/** remote as found in `git remote -v` */
+		remoteUrl?: string;
+		/** current local branch name */
+		branch?: string;
+		/** current remote branch name */
+		remoteBranch?: string;
+		/** list of local branches */
+		branches?: string[];
+		/** list of remote branches */
+		remoteBranches?: { remote?: string; branch: string }[];
+		/** number of commits behind (comes from git as a string) */
+		commitsBehindOriginHeadBranch?: string;
+		/** list of all remote names... things like origin, upstream, etc. */
+		remotes?: string[];
+		/** current remote name */
+		currentRemote?: string;
+	};
+	/** CodeStream provider data */
+	provider?: {
+		/** CS-specific providerId like github*com */
+		id?: string;
+		/** for github, this would be GitHub */
+		name?: string;
+		/** is this provider connected in CodeStream */
+		isConnected?: boolean;
+		/** contents of the template */
+		pullRequestTemplate?: string;
+		/** lines in the template */
+		pullRequestTemplateLinesCount?: number;
+		/** various template names */
+		pullRequestTemplateNames?: string[];
+		/** path to the template */
+		pullRequestTemplatePath?: string;
+		/**
+		 * repo information tied to the provider (not CodeStream)
+		 */
+		repo?: {
+			/** this is the provider-specific repository id */
+			providerRepoId?: string;
+			/** default branch: master, main, something else, etc.... */
+			defaultBranch?: string;
+			/** is this repo a fork? */
+			isFork?: boolean;
+			/** in github.com/TeamCodeStream/codestream this is TeamCodeStream/codestream */
+			nameWithOwner?: string;
+			/** in github.com/TeamCodeStream/codestream this is TeamCodeStream */
+			owner?: string;
+		};
+	};
+
 	warning?: {
 		message?: string;
 		type?: "ALREADY_HAS_PULL_REQUEST" | string;
@@ -385,19 +395,43 @@ export const CheckPullRequestPreconditionsRequestType = new RequestType<
 export interface CreatePullRequestRequest {
 	/** if a reviewId isn't provided, you must provide a repoId */
 	reviewId?: string;
+
+	/** CodeStream repository id */
 	repoId?: string;
+	/** CodeStream providerId aka github*com */
 	providerId: string;
+	/** PR title */
 	title: string;
+	/** PR description (optional) */
 	description?: string;
+	/** is this repo a fork? will be needed when creating the PR on the provider */
+	isFork?: boolean;
+	/** in github.com/TeamCodeStream/codestream this is TeamCodeStream/codestream */
+	baseRefRepoNameWithOwner?: string;
+	/** in github.com/TeamCodeStream/codestream this is codestream */
+	baseRefRepoName: string;
+	/** base branch name, or the branch that will accept the PR */
 	baseRefName: string;
+	/** in github.com/TeamCodeStream/codestream this is TeamCodeStream, some providers, like GitHub need this for forks */
+	headRefRepoOwner?: string;
+	/** in github.com/TeamCodeStream/codestream this is TeamCodeStream/codestream */
+	headRefRepoNameWithOwner: string;
+	/** head branch name, or the branch you have been working on and want to merge somewhere */
 	headRefName: string;
-	providerRepositoryId?: string /* for use across forks */;
-	remote: string /* to look up the repo ID on the provider */;
+	/** certain providers need an internal id  */
+	providerRepositoryId?: string;
+	/** current repo remote name */
+	remote: string;
+	/** if set, the user wants us to create a remote branch */
+	requiresRemoteBranch?: boolean;
+	/** name of the remote */
 	remoteName?: string;
+	/** used for CodeStream work-in-progress / start-work */
 	addresses?: {
 		title: string;
 		url: string;
 	}[];
+	/**  name of the user's IDE */
 	ideName?: string;
 }
 

@@ -1,7 +1,10 @@
 package com.codestream.webview
 
 import com.codestream.DEBUG
+import com.codestream.extensions.escapeUnicode
+import com.codestream.system.Platform
 import com.codestream.system.SPACE_ENCODED
+import com.codestream.system.platform
 import com.google.gson.JsonElement
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.diagnostic.Logger
@@ -16,6 +19,8 @@ import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefRequestHandlerAdapter
 import org.cef.network.CefRequest
 
+private const val BASE_ZOOM_LEVEL = 1.0
+
 class JBCefWebView(val jbCefBrowser: JBCefBrowser, val router: WebViewRouter) : WebView {
 
     private val logger = Logger.getInstance(JBCefWebView::class.java)
@@ -28,11 +33,15 @@ class JBCefWebView(val jbCefBrowser: JBCefBrowser, val router: WebViewRouter) : 
         }
 
     }
-    override val component = JBCefWebViewPanel(jbCefBrowser)
+    override val component = jbCefBrowser.component
 
     init {
         logger.info("Initializing JBCef WebView")
-        jbCefBrowser.cefBrowser.createImmediately()
+        if (platform != Platform.LINUX_X64 && platform != Platform.LINUX_ARM64) {
+            // we needed this to work around some blank webview glitches in the past,
+            // but now it causes the very same glitch on Linux
+            jbCefBrowser.cefBrowser.createImmediately()
+        }
         jbCefBrowser.jbCefClient.addContextMenuHandler(object : CefContextMenuHandlerAdapter(){
             override fun onBeforeContextMenu(
                 browser: CefBrowser?,
@@ -60,7 +69,11 @@ class JBCefWebView(val jbCefBrowser: JBCefBrowser, val router: WebViewRouter) : 
                         window.acquireHostApi = function() {
                             return {
                                 postMessage: function(message, origin) {
-                                    ${routerQuery.inject("JSON.stringify(message)")}
+                                    let json = JSON.stringify(message);
+                                    json = json.replace(/[\u007F-\uFFFF]/g, function(chr) {
+                                        return "\\u" + ("0000" + chr.charCodeAt(0).toString(16)).substr(-4)
+                                    });
+                                    ${routerQuery.inject("json")}
                                 }
                             }
                         }
@@ -87,7 +100,7 @@ class JBCefWebView(val jbCefBrowser: JBCefBrowser, val router: WebViewRouter) : 
                 user_gesture: Boolean,
                 is_redirect: Boolean
             ): Boolean {
-                return if (request?.url?.startsWith("file://") == true) {
+                return if (request?.url?.startsWith("file://") == true || request?.url?.contains("/dns-query") == true) {
                     super.onBeforeBrowse(browser, frame, request, user_gesture, is_redirect)
                 } else {
                     request?.url?.let {
@@ -110,14 +123,32 @@ class JBCefWebView(val jbCefBrowser: JBCefBrowser, val router: WebViewRouter) : 
     }
 
     override fun postMessage(message: JsonElement) {
-        jbCefBrowser.cefBrowser.executeJavaScript("window.postMessage($message,'*');", jbCefBrowser.cefBrowser.url, 0)
+        jbCefBrowser.cefBrowser.executeJavaScript("window.postMessage(${message.toString().escapeUnicode()},'*');", jbCefBrowser.cefBrowser.url, 0)
     }
 
     override fun focus() {
-        component.focus()
+        component.grabFocus()
     }
 
     override fun openDevTools() {
         jbCefBrowser.openDevtools()
     }
+
+    private var zoomLevel = BASE_ZOOM_LEVEL
+
+    override fun zoomIn() {
+        zoomLevel += 0.1
+        jbCefBrowser.zoomLevel = zoomLevel
+    }
+
+    override fun zoomOut() {
+        zoomLevel -= 0.1
+        jbCefBrowser.zoomLevel = zoomLevel
+    }
+
+    override fun resetZoom() {
+        zoomLevel = BASE_ZOOM_LEVEL
+        jbCefBrowser.zoomLevel = zoomLevel
+    }
+
 }

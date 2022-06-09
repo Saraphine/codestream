@@ -4,11 +4,15 @@ import * as path from "path";
 import { CodeStreamSession } from "session";
 import { URI } from "vscode-uri";
 import { SessionContainer } from "../container";
+import { GitRemoteParser } from "../git/parsers/remoteParser";
 import { Logger } from "../logger";
 import {
 	MapReposRequest,
 	MapReposRequestType,
 	MapReposResponse,
+	NormalizeUrlRequest,
+	NormalizeUrlRequestType,
+	NormalizeUrlResponse,
 	RepoMap
 } from "../protocol/agent.protocol.repos";
 import { log, lsp, lspHandler } from "../system";
@@ -205,5 +209,12 @@ export class RepositoryMappingManager {
 	private mappingFilePath(): string {
 		const p = path.join(this.codeStreamDirectory(), "mappings.json");
 		return p;
+	}
+
+	@log()
+	@lspHandler(NormalizeUrlRequestType)
+	async normalizeUrl({ url }: NormalizeUrlRequest): Promise<NormalizeUrlResponse> {
+		const [, domain, path] = await GitRemoteParser.parseGitUrl(url);
+		return { normalizedUrl: `${domain}/${path}` };
 	}
 }

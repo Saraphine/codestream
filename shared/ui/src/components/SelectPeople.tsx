@@ -41,6 +41,7 @@ export interface Props extends ConnectedProps {
 	multiSelect?: boolean;
 	labelExtras?: { [id: string]: string };
 	extraItems?: any[];
+	onlyPerson?: string; // if set, only allow this ID to be selected
 }
 
 interface ConnectedProps {
@@ -58,7 +59,7 @@ class SelectPeople extends React.Component<Props, State> {
 	};
 
 	render() {
-		const { value, title, children, teamMembers, onChange } = this.props;
+		const { value, title, children, teamMembers, onChange, onlyPerson } = this.props;
 		const items = teamMembers
 			.filter(_ => !_.email.match(/noreply/))
 			.map(person => {
@@ -81,6 +82,7 @@ class SelectPeople extends React.Component<Props, State> {
 							<Headshot size={20} display="inline-block" person={person} />
 						</span>
 					),
+					disabled: onlyPerson && person.id !== onlyPerson,
 					action: () => onChange(person)
 				};
 			}) as any;

@@ -76,7 +76,7 @@ import {
 	markItemRead
 } from "../actions";
 import { getThreadPosts } from "@codestream/webview/store/posts/reducer";
-import { DropdownButton } from "./DropdownButton";
+import { DropdownButton } from "../DropdownButton";
 import Tag from "../Tag";
 import { RepliesToPost } from "../Posts/RepliesToPost";
 import { ChangesetFileList } from "./ChangesetFileList";
@@ -107,12 +107,13 @@ import { isFeatureEnabled } from "@codestream/webview/store/apiVersioning/reduce
 import { getPost } from "../../store/posts/reducer";
 import { AddReactionIcon, Reactions } from "../Reactions";
 import { Attachments } from "../Attachments";
-import { PRSelectorButtons } from "../PullRequestComponents";
+import { PRErrorBox, PRSelectorButtons } from "../PullRequestComponents";
 import { PRProgress, PRProgressFill, PRProgressLine } from "../PullRequestFilesChangedList";
 
-interface RepoMetadata {
+export interface RepoMetadata {
 	repoName: string;
-	branch: string;
+	ref?: string;
+	branch?: string;
 }
 
 interface SimpleError {
@@ -187,7 +188,7 @@ const ComposeWrapper = styled.div.attrs(() => ({
 	}
 `;
 
-const RepoInfo = styled.span`
+export const RepoInfo = styled.span`
 	span {
 		color: var(--text-color-highlight);
 		display: inline-block;
@@ -764,17 +765,9 @@ const BaseReview = (props: BaseReviewProps) => {
 				)}
 
 				{props.headerError && props.headerError.message && (
-					<div
-						className="color-warning"
-						style={{
-							display: "flex",
-							padding: "10px 0",
-							whiteSpace: "normal",
-							alignItems: "flex-start"
-						}}
-					>
-						<Icon name="alert" />
-						<div style={{ paddingLeft: "10px" }}>
+					<PRErrorBox className="in-review">
+						<Icon name="alert" className="alert" />
+						<div className="message" style={{ whiteSpace: "normal" }}>
 							{props.headerError.message}
 							{canLocateRepo && singleRepo && (
 								<>
@@ -794,7 +787,7 @@ const BaseReview = (props: BaseReviewProps) => {
 								</>
 							)}
 						</div>
-					</div>
+					</PRErrorBox>
 				)}
 
 				<MetaSection>

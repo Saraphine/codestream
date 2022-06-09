@@ -1,5 +1,6 @@
 import { GitRemote, GitRepository } from "git/models/models";
 import { ReposScm } from "protocol/agent.protocol";
+import { xfs } from "./xfs";
 
 export namespace GitRepositoryExtensions {
 	/**
@@ -9,14 +10,16 @@ export namespace GitRepositoryExtensions {
 	 * @param {GitRepository} repo
 	 * @param {(string | undefined)} currentBranch
 	 * @param {GitRemote[]} remotes
+	 * @param {withSubDirectoriesDepth} number, if set, a partial tree of directories will be returned with this repository
 	 * @return {*}  {ReposScm}
 	 */
 	export function toRepoScm(
 		repo: GitRepository,
 		currentBranch: string | undefined,
-		remotes: GitRemote[]
+		remotes: GitRemote[],
+		withSubDirectoriesDepth?: number
 	): ReposScm {
-		return {
+		const result = {
 			id: repo.id,
 			path: repo.path,
 			folder: repo.folder,
@@ -33,7 +36,21 @@ export namespace GitRepositoryExtensions {
 						: remotes.find(remote => remote.domain.includes("bitbucket"))
 						? "bitbucket"
 						: ""
-					: undefined
+					: undefined,
+			directories: withSubDirectoriesDepth
+				? xfs.getDirectoryTree(
+						{
+							depth: 0,
+							children: [],
+							name: "/",
+							fullPath: repo.path,
+							id: repo.id!,
+							partialPath: []
+						},
+						withSubDirectoriesDepth
+				  )
+				: undefined
 		};
+		return result;
 	}
 }

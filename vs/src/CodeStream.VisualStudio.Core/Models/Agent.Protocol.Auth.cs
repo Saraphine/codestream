@@ -3,7 +3,6 @@
 		public string Email { get; set; }
 		public string Password { get; set; }
 		public string TeamId { get; set; }
-		public string Team { get; set; }
 	}
 
 	public class PasswordLoginRequestType : RequestType<PasswordLoginRequest> {

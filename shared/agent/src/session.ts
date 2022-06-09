@@ -1,9 +1,10 @@
 "use strict";
 
+import glob from "glob-promise";
 import { Agent as HttpAgent } from "http";
 import { Agent as HttpsAgent } from "https";
 import HttpsProxyAgent from "https-proxy-agent";
-import { isEqual } from "lodash-es";
+import { isEqual, omit, uniq } from "lodash-es";
 import * as path from "path";
 import * as url from "url";
 import {
@@ -35,6 +36,7 @@ import { DocumentEventHandler } from "./documentEventHandler";
 import { GitRepository } from "./git/models/repository";
 import { Logger } from "./logger";
 import {
+	AgentFileSearchRequestType,
 	ApiRequestType,
 	ApiVersionCompatibility,
 	BaseAgentOptions,
@@ -42,8 +44,11 @@ import {
 	ChangeDataType,
 	CodeStreamEnvironment,
 	CodeStreamEnvironmentInfo,
+	ConfirmLoginCodeRequest,
+	ConfirmLoginCodeRequestType,
 	ConfirmRegistrationRequest,
 	ConfirmRegistrationRequestType,
+	ConfirmRegistrationResponse,
 	ConnectionCode,
 	ConnectionStatus,
 	DidChangeApiVersionCompatibilityNotificationType,
@@ -53,21 +58,29 @@ import {
 	DidChangeServerUrlNotificationType,
 	DidChangeVersionCompatibilityNotificationType,
 	DidEncounterMaintenanceModeNotificationType,
+	DidFailLoginCodeGenerationNotificationType,
 	DidFailLoginNotificationType,
 	DidLoginNotificationType,
 	DidLogoutNotificationType,
 	DidSetEnvironmentNotificationType,
+	DidStartLoginCodeGenerationNotificationType,
 	DidStartLoginNotificationType,
+	GenerateLoginCodeRequest,
+	GenerateLoginCodeRequestType,
 	GetAccessTokenRequestType,
 	GetInviteInfoRequest,
 	GetInviteInfoRequestType,
 	isLoginFailResponse,
+	JoinCompanyRequest,
+	JoinCompanyRequestType,
 	LoginResponse,
 	LogoutReason,
 	OtcLoginRequest,
 	OtcLoginRequestType,
 	PasswordLoginRequest,
 	PasswordLoginRequestType,
+	RegisterNrUserRequest,
+	RegisterNrUserRequestType,
 	RegisterUserRequest,
 	RegisterUserRequestType,
 	ReportingMessageType,
@@ -91,6 +104,7 @@ import {
 	CSMarkerLocations,
 	CSMe,
 	CSMePreferences,
+	CSNRRegisterResponse,
 	CSPost,
 	CSRegisterResponse,
 	CSRepository,
@@ -99,12 +113,22 @@ import {
 	CSUser,
 	LoginResult
 } from "./protocol/api.protocol";
-import { log, memoize, registerDecoratedHandlers, registerProviders } from "./system";
+import { log, memoize, registerDecoratedHandlers, registerProviders, Strings } from "./system";
 import { testGroups } from "./testGroups";
 
 const envRegex = /https?:\/\/((?:(\w+)-)?api|localhost|(\w+))\.codestream\.(?:us|com)(?::\d+$)?/i;
 
 const FIRST_SESSION_TIMEOUT = 12 * 60 * 60 * 1000; // first session "times out" after 12 hours
+
+const PROVIDERS_TO_REGISTER_BEFORE_SIGNIN = {
+	[`newrelic*com`]: {
+		host: "newrelic.com",
+		id: "newrelic*com",
+		isEnterprise: false,
+		name: "newrelic",
+		needsConfigure: true
+	}
+};
 
 export const loginApiErrorMappings: { [k: string]: LoginResult } = {
 	"USRC-1001": LoginResult.InvalidCredentials,
@@ -116,6 +140,7 @@ export const loginApiErrorMappings: { [k: string]: LoginResult } = {
 	"USRC-1005": LoginResult.InvalidToken,
 	"USRC-1002": LoginResult.InvalidToken,
 	"USRC-1006": LoginResult.AlreadyConfirmed,
+	"USRC-1026": LoginResult.WebMail,
 	// "RAPI-1001": "missing parameter" // shouldn't ever happen
 	"RAPI-1003": LoginResult.InvalidToken,
 	"USRC-1012": LoginResult.NotOnTeam,
@@ -123,6 +148,9 @@ export const loginApiErrorMappings: { [k: string]: LoginResult } = {
 	"USRC-1023": LoginResult.MaintenanceMode,
 	"USRC-1024": LoginResult.MustSetPassword,
 	"USRC-1022": LoginResult.ProviderConnectFailed,
+	"USRC-1028": LoginResult.ExpiredCode,
+	"USRC-1029": LoginResult.TooManyAttempts,
+	"USRC-1030": LoginResult.InvalidCode,
 	"USRC-1015": LoginResult.MultipleWorkspaces, // deprecated in favor of below...
 	"PRVD-1002": LoginResult.MultipleWorkspaces,
 	"PRVD-1005": LoginResult.SignupRequired,
@@ -263,6 +291,9 @@ export class CodeStreamSession {
 		);
 
 		Container.initialize(agent, this);
+
+		registerProviders(PROVIDERS_TO_REGISTER_BEFORE_SIGNIN, this);
+
 		this.logNodeEnvVariables();
 
 		const redactProxyPasswdRegex = /(http:\/\/.*:)(.*)(@.*)/gi;
@@ -319,8 +350,10 @@ export class CodeStreamSession {
 			this._httpAgent = new HttpAgent();
 		}
 
+		Logger.log(`API Server URL: >${_options.serverUrl}<`);
+		Logger.log(`Reject unauthorized: ${this.rejectUnauthorized}`);
 		this._api = new CodeStreamApiProvider(
-			_options.serverUrl,
+			_options.serverUrl?.trim(),
 			this.versionInfo,
 			this._httpAgent || this._httpsAgent,
 			this.rejectUnauthorized
@@ -374,23 +407,7 @@ export class CodeStreamSession {
 			}
 		});
 
-		this._api.verifyConnectivity().then(response => {
-			if (!response.environment) {
-				// for versions of api server pre 8.2.34, which did not support returning environment
-				// in connectivity response ... this code can be eliminated once we're enforcing
-				// versions higher than this
-				this._environmentInfo = this.getEnvironmentFromServerUrl(this._options.serverUrl);
-				Logger.warn("No environment in response, got it from server URL:", this._environmentInfo);
-			} else {
-				this._environmentInfo = {
-					environment: response.environment,
-					isOnPrem: response.isOnPrem || false,
-					isProductionCloud: response.isProductionCloud || false
-				};
-				Logger.log("Got environment from connectivity response:", this._environmentInfo);
-			}
-			this.agent.sendNotification(DidSetEnvironmentNotificationType, this._environmentInfo);
-		});
+		this.verifyConnectivity();
 		const versionManager = new VersionMiddlewareManager(this._api);
 		versionManager.onDidChangeCompatibility(this.onVersionCompatibilityChanged, this);
 		versionManager.onDidChangeApiCompatibility(this.onApiVersionCompatibilityChanged, this);
@@ -414,9 +431,13 @@ export class CodeStreamSession {
 		this.agent.registerHandler(PasswordLoginRequestType, e => this.passwordLogin(e));
 		this.agent.registerHandler(TokenLoginRequestType, e => this.tokenLogin(e));
 		this.agent.registerHandler(OtcLoginRequestType, e => this.otcLogin(e));
+		this.agent.registerHandler(ConfirmLoginCodeRequestType, e => this.codeLogin(e));
+		this.agent.registerHandler(GenerateLoginCodeRequestType, e => this.generateLoginCode(e));
 		this.agent.registerHandler(RegisterUserRequestType, e => this.register(e));
+		this.agent.registerHandler(RegisterNrUserRequestType, e => this.registerNr(e));
 		this.agent.registerHandler(ConfirmRegistrationRequestType, e => this.confirmRegistration(e));
 		this.agent.registerHandler(GetInviteInfoRequestType, e => this.getInviteInfo(e));
+		this.agent.registerHandler(JoinCompanyRequestType, e => this.joinCompany(e));
 		this.agent.registerHandler(ApiRequestType, (e, cancellationToken: CancellationToken) =>
 			this.api.fetch(e.url, e.init, e.token)
 		);
@@ -424,7 +445,11 @@ export class CodeStreamSession {
 		this.agent.registerHandler(
 			BootstrapRequestType,
 			async (e, cancellationToken: CancellationToken) => {
-				const { companies, repos, streams, teams, users } = SessionContainer.instance();
+				const { companies, repos, streams, teams, users, codeErrors } = SessionContainer.instance();
+
+				// needed to ensure we subscribe to object streams for all code errors we have access to
+				await codeErrors.ensureCached();
+
 				const promise = Promise.all([
 					companies.get(),
 					repos.get(),
@@ -444,6 +469,7 @@ export class CodeStreamSession {
 					usersResponse,
 					preferencesResponse
 				] = await promise;
+
 				return {
 					companies: companiesResponse.companies,
 					preferences: preferencesResponse.preferences,
@@ -461,6 +487,7 @@ export class CodeStreamSession {
 	}
 
 	private logNodeEnvVariables() {
+		Logger.log(`Node.js version: ${process.version}`);
 		Logger.log("NODE_* environment variables:");
 		for (const prop in process.env) {
 			if (prop.startsWith("NODE_")) {
@@ -476,6 +503,14 @@ export class CodeStreamSession {
 		this.agent.sendNotification(DidChangeServerUrlNotificationType, {
 			serverUrl: options.serverUrl
 		});
+		if (options.environment) {
+			this._environmentInfo.environment = options.environment;
+			this.agent.sendNotification(DidSetEnvironmentNotificationType, this._environmentInfo);
+		}
+
+		// whenever we set the server URL, verify we can reach it, this also fetches
+		// necessary environment-related info
+		this.verifyConnectivity();
 	}
 
 	private _didEncounterMaintenanceMode() {
@@ -574,6 +609,12 @@ export class CodeStreamSession {
 					data: e.data
 				});
 				break;
+			case MessageType.CodeErrors:
+				this.agent.sendNotification(DidChangeDataNotificationType, {
+					type: ChangeDataType.CodeErrors,
+					data: e.data
+				});
+				break;
 			case MessageType.Streams:
 				this._onDidChangeStreams.fire(e.data);
 				this.agent.sendNotification(DidChangeDataNotificationType, {
@@ -613,6 +654,22 @@ export class CodeStreamSession {
 				this.echoReceived();
 				break;
 		}
+	}
+
+	// resolve user changes and notify the webview of the change
+	// this is strongly recommended over JUST resolving user changes, since the resolution may
+	// actually result in a user object being fetched, and can lead to race conditions if the
+	// fetched user object isn't propagated to the webview
+	async resolveUserAndNotify(user: CSUser): Promise<CSUser> {
+		const data = (await SessionContainer.instance().users.resolve({
+			type: MessageType.Users,
+			data: [user]
+		})) as CSMe[];
+		this.agent.sendNotification(DidChangeDataNotificationType, {
+			type: ChangeDataType.Users,
+			data
+		});
+		return data[0];
 	}
 
 	@log()
@@ -687,12 +744,30 @@ export class CodeStreamSession {
 		return this.environmentInfo.environment;
 	}
 
+	get environmentName() {
+		const host =
+			this._environmentInfo.environmentHosts &&
+			this._environmentInfo.environmentHosts.find(host => {
+				return host.shortName === this._environmentInfo.environment;
+			});
+		if (host) return host.name;
+		else return undefined;
+	}
+
 	get isOnPrem() {
 		return this.environmentInfo.isOnPrem;
 	}
 
 	get isProductionCloud() {
 		return this.environmentInfo.isProductionCloud;
+	}
+
+	get newRelicLandingServiceUrl() {
+		return this.environmentInfo.newRelicLandingServiceUrl;
+	}
+
+	get newRelicApiUrl() {
+		return this.environmentInfo.newRelicApiUrl;
 	}
 
 	get disableStrictSSL(): boolean {
@@ -802,9 +877,37 @@ export class CodeStreamSession {
 		});
 	}
 
+	async tryResolveCurrentTeam(): Promise<CSTeam | undefined> {
+		if (!SessionContainer.isInitialized()) {
+			return undefined;
+		}
+		try {
+			return await SessionContainer.instance().teams.getByIdFromCache(this.teamId);
+		} catch (e) {
+			// ignore
+			return undefined;
+		}
+	}
+
 	@log({ singleLine: true })
 	async verifyConnectivity(): Promise<VerifyConnectivityResponse> {
-		return this.api.verifyConnectivity();
+		if (!this._api) throw new Error("cannot verify connectivity, no API connection established");
+		const response = await this._api.verifyConnectivity();
+		const currentTeam = await this.tryResolveCurrentTeam();
+		this.registerApiCapabilities(response.capabilities as CSApiCapabilities, currentTeam);
+		// response.capabilities is unfiltered - doesn't account for restricted / team / org flags
+		response.capabilities = this._apiCapabilities;
+		this._environmentInfo = {
+			environment: response.environment || "",
+			isOnPrem: response.isOnPrem || false,
+			isProductionCloud: response.isProductionCloud || false,
+			newRelicLandingServiceUrl: response.newRelicLandingServiceUrl,
+			newRelicApiUrl: response.newRelicApiUrl,
+			environmentHosts: response.environmentHosts
+		};
+		Logger.log("Got environment from connectivity response:", this._environmentInfo);
+		this.agent.sendNotification(DidSetEnvironmentNotificationType, this._environmentInfo);
+		return response;
 	}
 
 	@log({ singleLine: true })
@@ -830,10 +933,32 @@ export class CodeStreamSession {
 			`Logging ${token.email} into CodeStream (@ ${token.url}) via authentication token...`
 		);
 
+		// coming from the webview after a successful email confirmation, we explicitly handle
+		// an instruction to switch environments, since the message to switch environments that is
+		// sent to the IDE may still be in progress
+		if (request.setEnvironment) {
+			this._environmentInfo.environment = request.setEnvironment.environment;
+			this.setServerUrl({ serverUrl: request.setEnvironment.serverUrl });
+		}
+
 		return this.login({
 			type: "token",
 			...request
 		});
+	}
+
+	@log({ singleLine: true })
+	async joinCompany(request: JoinCompanyRequest) {
+		// coming from the webview after a successful signup, we explicitly handle
+		// an instruction to switch environments, since the message to switch environments that is
+		// sent to the IDE may still be in progress
+		if (request.fromEnvironment) {
+			// make an explicit request to the API server to copy this user from the other environment
+			// before joining the company
+			return this._api!.joinCompanyFromEnvironment(request);
+		} else {
+			return this._api!.joinCompany(request);
+		}
 	}
 
 	@log({ singleLine: true })
@@ -850,6 +975,63 @@ export class CodeStreamSession {
 			debugger;
 			throw new Error();
 		}
+	}
+
+	@log({ singleLine: true })
+	async codeLogin(request: ConfirmLoginCodeRequest) {
+		const cc = Logger.getCorrelationContext();
+		Logger.log(cc, `Logging into Codestream (@ ${this._options.serverUrl}) via login code...`);
+
+		return this.login({
+			type: "loginCode",
+			...request
+		});
+	}
+
+	@log({ singleLine: true })
+	async generateLoginCode(request: GenerateLoginCodeRequest) {
+		if (this.status === SessionStatus.SignedIn) {
+			Container.instance().errorReporter.reportMessage({
+				type: ReportingMessageType.Warning,
+				source: "agent",
+				message: "There was a redundant attempt to login while already logged in.",
+				extra: {
+					loginType: "loginCode"
+				}
+			});
+			return { status: LoginResult.AlreadySignedIn };
+		}
+
+		this.agent.sendNotification(DidStartLoginCodeGenerationNotificationType, undefined);
+
+		try {
+			await this.api.generateLoginCode(request);
+		} catch (ex) {
+			this.agent.sendNotification(DidFailLoginCodeGenerationNotificationType, undefined);
+			if (ex instanceof ServerError) {
+				if (ex.statusCode !== undefined && ex.statusCode >= 400 && ex.statusCode < 500) {
+					let error = loginApiErrorMappings[ex.info.code] || LoginResult.Unknown;
+					return {
+						status: error,
+						extra: ex.info
+					};
+				}
+			}
+
+			Container.instance().errorReporter.reportMessage({
+				type: ReportingMessageType.Error,
+				message: "Unexpected error generating login code",
+				source: "agent",
+				extra: {
+					...ex
+				}
+			});
+			throw AgentError.wrap(ex, `Login failed:\n${ex.message}`);
+		}
+
+		return {
+			status: LoginResult.Success
+		};
 	}
 
 	@log({
@@ -898,6 +1080,9 @@ export class CodeStreamSession {
 
 			// api.login() will throw a failed response object if it needs to send some extra data back
 			if (isLoginFailResponse(ex)) {
+				if (ex.extra.isRegistered) {
+					this.setSuperPropsAndCallTelemetry(ex.extra.user);
+				}
 				return ex;
 			}
 
@@ -916,6 +1101,8 @@ export class CodeStreamSession {
 		this._codestreamAccessToken = token.value;
 		this._teamId = (this._options as any).teamId = token.teamId;
 		this._codestreamUserId = response.user.id;
+		this._userId = response.user.id;
+		this._email = response.user.email;
 
 		const currentTeam = response.teams.find(t => t.id === this._teamId)!;
 		this.registerApiCapabilities(response.capabilities || {}, currentTeam);
@@ -931,12 +1118,19 @@ export class CodeStreamSession {
 		}
 
 		this._providers = currentTeam.providerHosts || {};
-		registerProviders(this._providers, this);
+		registerProviders(
+			currentTeam.providerHosts
+				? omit(currentTeam.providerHosts, Object.keys(PROVIDERS_TO_REGISTER_BEFORE_SIGNIN))
+				: {},
+			this,
+			false
+		);
 
 		const cc = Logger.getCorrelationContext();
 
 		SessionContainer.initialize(this);
 		try {
+			await SessionContainer.instance().users.cacheSet(response.user);
 			// after initializing, wait for the initial search of git repositories to complete,
 			// otherwise newly matched repos might be returned to the webview before the bootstrap
 			// request can be processed, resulting in bad repo data known by the webview
@@ -948,10 +1142,6 @@ export class CodeStreamSession {
 
 		// re-register to acknowledge lsp handlers from newly instantiated classes
 		registerDecoratedHandlers(this.agent);
-
-		// Make sure to update this after the slack/msteams switch as the userId will change
-		this._userId = response.user.id;
-		this._email = response.user.email;
 
 		this.setStatus(SessionStatus.SignedIn);
 
@@ -997,8 +1187,9 @@ export class CodeStreamSession {
 			}
 		}
 
-		// Initialize tracking
-		this.initializeTelemetry(response.user, currentTeam, response.companies);
+		// initialze tracking call with full user data (ie team/company info)
+		// this is the second time identify() is called in signup flow, first in signin flow
+		this.setSuperPropsAndCallTelemetry(response.user, currentTeam, response.companies);
 
 		const loginResponse = {
 			loginResponse: { ...response },
@@ -1011,7 +1202,8 @@ export class CodeStreamSession {
 				teamId: this._teamId!,
 				userId: response.user.id,
 				codemarkId: options.codemarkId,
-				reviewId: options.reviewId
+				reviewId: options.reviewId,
+				codeErrorId: options.codeErrorId
 			}
 		};
 
@@ -1043,11 +1235,11 @@ export class CodeStreamSession {
 			const response = await (this._api as CodeStreamApiProvider).register(request);
 
 			if (isCSLoginResponse(response)) {
-				if (response.teams.length === 0) {
-					return { status: LoginResult.NotOnTeam, token: response.accessToken };
+				if (response.companies.length === 0 || response.teams.length === 0) {
+					return { status: LoginResult.NotInCompany, token: response.accessToken };
 				}
 
-				this._teamId = response.teams[0].id;
+				this._teamId = response.teams.find(_ => _.isEveryoneTeam)!.id;
 				return { status: LoginResult.AlreadyConfirmed, token: response.accessToken };
 			} else {
 				return { status: LoginResult.Success };
@@ -1071,20 +1263,121 @@ export class CodeStreamSession {
 		}
 	}
 
+	@log({
+		singleLine: true
+	})
+	async registerNr(request: RegisterNrUserRequest) {
+		function isCSNRLoginResponse(r: CSNRRegisterResponse | CSLoginResponse): r is CSLoginResponse {
+			return (r as any).accessToken !== undefined;
+		}
+
+		try {
+			const response = await (this._api as CodeStreamApiProvider).registerNr(request);
+			// @TODO: this logic could be cleaner and easier to read
+			if (isCSNRLoginResponse(response)) {
+				if (response.companies.length === 0 || response.teams.length === 0) {
+					return {
+						status: LoginResult.NotInCompany,
+						token: response.accessToken,
+						email: response.user?.email,
+						eligibleJoinCompanies: response.eligibleJoinCompanies,
+						isWebmail: response.isWebmail,
+						accountIsConnected: response.accountIsConnected
+					};
+				}
+				this._teamId = response.teams.find(_ => _.isEveryoneTeam)!.id;
+				return {
+					status: LoginResult.AlreadyConfirmed,
+					token: response.accessToken,
+					email: response.user?.email,
+					teamId: this._teamId,
+					companies: response.companies,
+					eligibleJoinCompanies: response.eligibleJoinCompanies,
+					isWebmail: response.isWebmail,
+					accountIsConnected: response.accountIsConnected
+				};
+			} else {
+				// @TODO: This specific logical path could use some QA
+				return {
+					status: LoginResult.Success,
+					token: response.token,
+					email: response.email,
+					teamId: this._teamId,
+					companies: response.companies,
+					eligibleJoinCompanies: response.eligibleJoinCompanies,
+					isWebmail: response.isWebmail,
+					accountIsConnected: response.accountIsConnected
+				};
+			}
+		} catch (error) {
+			if (error instanceof ServerError) {
+				if (error.statusCode !== undefined && error.statusCode >= 400 && error.statusCode < 500) {
+					return {
+						status: loginApiErrorMappings[error.info.code] || LoginResult.Unknown,
+						email: error.info.info,
+						notInviteRelated: true
+					};
+				}
+			}
+
+			Container.instance().errorReporter.reportMessage({
+				type: ReportingMessageType.Error,
+				message: "Unexpected error during registration",
+				source: "agent",
+				extra: {
+					...error
+				}
+			});
+			return error;
+		}
+	}
+
 	@log({ singleLine: true })
 	async confirmRegistration(request: ConfirmRegistrationRequest) {
 		try {
 			const response = await (this._api as CodeStreamApiProvider).confirmRegistration(request);
-			if (response.teams.length === 0) {
-				return { status: LoginResult.NotOnTeam, token: response.accessToken };
+
+			this.setSuperPropsAndCallTelemetry(response.user);
+
+			const result: ConfirmRegistrationResponse = {
+				user: {
+					id: response.user.id
+				},
+				status: LoginResult.Unknown,
+				token: response.accessToken,
+				companies: response.companies,
+				eligibleJoinCompanies: response.eligibleJoinCompanies,
+				accountIsConnected: response.accountIsConnected,
+				isWebmail: response.isWebmail
+			};
+			if (response.setEnvironment) {
+				Logger.log(
+					`Passing directive to switch environments to ${response.setEnvironment.environment}:${response.setEnvironment.publicApiUrl}`
+				);
+				result.setEnvironment = {
+					environment: response.setEnvironment.environment,
+					serverUrl: response.setEnvironment.publicApiUrl
+				};
 			}
 
-			this._teamId = response.teams[0].id;
-			return { status: LoginResult.Success, token: response.accessToken };
+			if (response.companies.length === 0 || response.teams.length === 0) {
+				result.status = LoginResult.NotInCompany;
+				return result;
+			}
+			//if (response.teams.length === 0) {
+			//	result.status = LoginResult.NotOnTeam;
+			//	return result;
+			//}
+
+			this._teamId = response.teams.find(_ => _.isEveryoneTeam)!.id;
+			result.status = LoginResult.Success;
+			return result;
 		} catch (error) {
 			if (error instanceof ServerError) {
 				if (error.statusCode !== undefined && error.statusCode >= 400 && error.statusCode < 500) {
-					return { status: loginApiErrorMappings[error.info.code] || LoginResult.Unknown };
+					return {
+						status: loginApiErrorMappings[error.info.code] || LoginResult.Unknown
+					};
 				}
 			}
 
@@ -1214,7 +1507,7 @@ export class CodeStreamSession {
 		}
 	}
 
-	private async initializeTelemetry(user: CSMe, team: CSTeam, companies: CSCompany[]) {
+	private async setSuperPropsAndCallTelemetry(user: CSMe, team?: CSTeam, companies?: CSCompany[]) {
 		// Set super props
 		this._telemetryData.hasCreatedPost = user.totalPosts > 0;
 
@@ -1228,10 +1521,11 @@ export class CodeStreamSession {
 			Endpoint: this.versionInfo.ide.name,
 			"Endpoint Detail": this.versionInfo.ide.detail,
 			"IDE Version": this.versionInfo.ide.version,
-			Deployment: this.isOnPrem ? "OnPrem" : "Cloud"
+			Deployment: this.isOnPrem ? "OnPrem" : "Cloud",
+			Country: user.countryCode
 		};
 
-		if (team != null) {
+		if (team != null && companies != null) {
 			const company = companies.find(c => c.id === team.companyId);
 			props["Company ID"] = team.companyId;
 			props["Team Created Date"] = new Date(team.createdAt!).toISOString();
@@ -1258,6 +1552,7 @@ export class CodeStreamSession {
 						key => `${key}|${company.testGroups![key]}`
 					);
 				}
+				props["NR Connected Org"] = !!company.isNRConnected;
 			}
 		}
 
@@ -1273,13 +1568,50 @@ export class CodeStreamSession {
 			!!user.firstSessionStartedAt &&
 			user.firstSessionStartedAt <= Date.now() + FIRST_SESSION_TIMEOUT;
 
+		if (user.providerInfo) {
+			const data =
+				(team && user.providerInfo[team.id]?.newrelic?.data) || user.providerInfo.newrelic?.data;
+			if (data) {
+				if (data.userId) {
+					props["NR User ID"] = data.userId;
+					props["NR Connected Org"] = true;
+				}
+				if (data?.orgIds && data.orgIds?.length) {
+					props["NR Organization ID"] = data?.orgIds[0];
+				}
+			}
+		}
+
+		let userId = this._codestreamUserId || user.id;
+
+		const environmentName = this.environmentName;
+		if (environmentName) {
+			props["Region"] = environmentName;
+		}
+
 		const { telemetry } = Container.instance();
 		await telemetry.ready();
-		telemetry.identify(this._codestreamUserId!, props);
+		telemetry.identify(userId, props);
 		telemetry.setSuperProps(props);
 		if (user.firstSessionStartedAt !== undefined) {
 			telemetry.setFirstSessionProps(user.firstSessionStartedAt, FIRST_SESSION_TIMEOUT);
 		}
+	}
+
+	@log()
+	async addSuperProps(props: { [key: string]: any }) {
+		const { telemetry } = Container.instance();
+		await telemetry.ready();
+		telemetry.identify(this._codestreamUserId!, props);
+		telemetry.addSuperProps(props);
+	}
+
+	async addNewRelicSuperProps(userId: number, orgId: number) {
+		return this.addSuperProps({
+			"NR User ID": userId,
+			"NR Organization ID": orgId,
+			"NR Connected Org": true
+		});
 	}
 
 	@log()
@@ -1299,6 +1631,9 @@ export class CodeStreamSession {
 		const teamSettings = (team && team.settings) || {};
 		const teamFeatures = teamSettings.features || {};
 		this._apiCapabilities = {};
+		if (this.versionInfo.ide.name == null || this.versionInfo.ide.name === "") {
+			Logger.warn("IDE name not set - IDE-specific capabilities can't be identified");
+		}
 		for (const key in apiCapabilities) {
 			const capability = apiCapabilities[key];
 			if (
@@ -1320,7 +1655,7 @@ export class CodeStreamSession {
 		// generate a random group assignment from the possible choices and ping the server
 		const set: { [key: string]: string } = {};
 		const companyTestGroups = company.testGroups || {};
-		for (let testName in testGroups) {
+		for (const testName in testGroups) {
 			if (!companyTestGroups[testName]) {
 				const { choices } = testGroups[testName];
 				const which = Math.floor(Math.random() * choices.length);
@@ -1339,7 +1674,16 @@ export class CodeStreamSession {
 		markerLocations.flushUncommittedLocations(repo);
 
 		const me = await users.getMe();
-		if (me.user.preferences?.reviewCreateOnDetectUnreviewedCommits !== false) {
+		// disable FROP for new users by default
+		let createReviewOnDetectUnreviewedCommits;
+		if (me.createdAt > 1641405000000) {
+			createReviewOnDetectUnreviewedCommits =
+				me.preferences?.reviewCreateOnDetectUnreviewedCommits === true ? true : false;
+		} else {
+			createReviewOnDetectUnreviewedCommits =
+				me.preferences?.reviewCreateOnDetectUnreviewedCommits === false ? false : true;
+		}
+		if (createReviewOnDetectUnreviewedCommits) {
 			reviews.checkUnreviewedCommits(repo).then(unreviewedCommitCount => {
 				Logger.log(`Detected ${unreviewedCommitCount} unreviewed commits`);
 			});
@@ -1368,6 +1712,10 @@ export class CodeStreamSession {
 			this._activeServerAlerts.includes("broadcasterConnectionFailure") ||
 			this._activeServerAlerts.includes("broadcasterAcknowledgementFailure")
 		);
+	}
+
+	announceHistoryFetches() {
+		return this._activeServerAlerts.includes("announceHistoryFetches");
 	}
 
 	listenForEchoes() {
@@ -1401,6 +1749,59 @@ export class CodeStreamSession {
 		}
 		if (this.isOnPrem && this.apiCapabilities.echoes) {
 			this.listenForEchoes();
+		}
+	}
+
+	async onFileSearch(basePath: string, path: string) {
+		if (!path) return { files: [] };
+
+		// Normalize path of errors originated from Windows
+		path = path.replace(/\\/g, "/");
+
+		// reverse to start with the shortest path (aka least specific)
+		const paths = Strings.asPartialPaths(path).reverse();
+		let files: string[] = [];
+		try {
+			Logger.log(`onFileSearch: Searching for ${path}`);
+			for (const path of paths) {
+				Logger.log(`onFileSearch: Requesting IDE file search for ${path} in ${basePath}`);
+				const fileSearchResponse = (
+					await this.agent.sendRequest(AgentFileSearchRequestType, { basePath, path })
+				).files;
+				if (!fileSearchResponse.length) {
+					// once there are no more results, just stop
+					break;
+				}
+				files = files.concat(fileSearchResponse);
+			}
+			Logger.log(`onFileSearch: IDE found ${files.length} possible matches for ${path}`);
+			if (!files.length) {
+				for (const path of paths) {
+					Logger.log(`onFileSearch: Searching filesystem for ${path} in ${basePath}`);
+					const globSearchResults = await glob(basePath + "/**/" + path);
+					if (!globSearchResults.length) {
+						// once there are no more results, just stop
+						break;
+					}
+					files = files.concat(globSearchResults);
+				}
+				Logger.log(`onFileSearch: filesystem found ${files.length} possible matches for ${path}`);
+			}
+			// put the most specific files found first (aka greatest number of separators)
+			files = uniq(files).reverse();
+			if (files.length) {
+				Logger.log(`onFileSearch ${path} found ${files.length} file(s)`, {
+					files: files
+				});
+			}
+			return {
+				files: files
+			};
+		} catch (ex) {
+			Logger.warn(`Could not find file[s] for ${path}`, {
+				error: ex
+			});
+			return { files: [] };
 		}
 	}
 

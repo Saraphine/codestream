@@ -65,6 +65,8 @@ export enum LogoutReason {
 
 export interface LogoutRequest {
 	reason?: LogoutReason;
+	newServerUrl?: string;
+	newEnvironment?: string;
 }
 
 export interface LogoutResponse {}
@@ -163,6 +165,7 @@ export const ShellPromptFolderRequestType = new RequestType<
 export interface UpdateServerUrlRequest {
 	serverUrl: string;
 	disableStrictSSL?: boolean;
+	environment?: string;
 }
 
 export interface UpdateServerUrlResponse {}
@@ -194,6 +197,7 @@ export interface CompareLocalFilesRequest {
 			providerId: string;
 			pullRequestReviewId?: string;
 			id: string;
+			collaborators: any[];
 		};
 	};
 }
@@ -245,3 +249,15 @@ export const DisconnectFromIDEProviderRequestType = new RequestType<
 	void,
 	void
 >(`${IpcRoutes.Host}/disconnect/vscode-provider`);
+
+export interface RefreshEditorsCodeLensRequest {}
+export interface RefreshEditorsCodeLensResponse {
+	success: boolean;
+}
+
+export const RefreshEditorsCodeLensRequestType = new RequestType<
+	RefreshEditorsCodeLensRequest,
+	RefreshEditorsCodeLensResponse,
+	void,
+	void
+>(`${IpcRoutes.Host}/editors/codelens/refresh`);

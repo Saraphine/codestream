@@ -1,9 +1,12 @@
 package com.codestream.settings
 
+import com.codestream.agentService
 import com.codestream.codeStream
 import com.codestream.gson
+import com.codestream.protocols.webview.ShowProgressIndicator
 import com.codestream.protocols.webview.WebViewContext
 import com.codestream.sessionService
+import com.codestream.webViewService
 import com.github.salomonbrys.kotson.fromJson
 import com.github.salomonbrys.kotson.jsonObject
 import com.github.salomonbrys.kotson.set
@@ -13,7 +16,11 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.ServiceManager
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlin.properties.Delegates
 
 const val INLINE_CODEMARKS = "viewCodemarksInline"
@@ -27,14 +34,26 @@ data class SettingsServiceState(
 )
 
 @State(name = "CodeStream", storages = [Storage("codestream.xml")])
-class SettingsService(val project: Project) : PersistentStateComponent<SettingsServiceState> {
+class SettingsService(val project: Project) : PersistentStateComponent<SettingsServiceState>, ConfigChangeListener {
+    private val logger = Logger.getInstance(SettingsService::class.java)
     private val applicationSettings = ServiceManager.getService(ApplicationSettingsService::class.java)
     private var _state = SettingsServiceState()
+
+    init {
+        applicationSettings.addConfigChangeListener(this)
+        Disposer.register(project) {
+            applicationSettings.removeConfigChangeListener(this)
+        }
+    }
 
     override fun getState(): SettingsServiceState = _state
 
     override fun loadState(state: SettingsServiceState) {
         _state = state
+    }
+
+    override fun onCriticalConfigurationChange(resetContext: Boolean) {
+        restartAgent(resetContext)
     }
 
     val currentStreamId get() = webViewContext?.currentStreamId
@@ -51,6 +70,28 @@ class SettingsService(val project: Project) : PersistentStateComponent<SettingsS
         }
     }
 
+    private fun restartAgent(resetContext: Boolean) {
+        logger.info("Restarting agent on config change, resetContext: $resetContext")
+        if (resetContext) {
+            clearWebViewContext()
+            project.sessionService?.logout() // clear out project.sessionService?.userLoggedIn?.team?.id
+            state.teamId = null
+        }
+        GlobalScope.launch {
+            try {
+                project.webViewService?.postNotification(
+                    ShowProgressIndicator.Start()
+                )
+                project.agentService?.restart(null, applicationSettings.autoSignIn)
+                project.agentService?.onDidStart {
+                    project.webViewService?.load()
+                }
+            } catch (t: Throwable) {
+                logger.error("Error restarting agent", t)
+            }
+        }
+    }
+
     fun getWebViewContextJson(): JsonElement {
         var jsonObject = gson.fromJson<JsonObject>(state.webViewContext)
         project.sessionService?.userLoggedIn?.team?.id.let {
@@ -60,6 +101,18 @@ class SettingsService(val project: Project) : PersistentStateComponent<SettingsS
         jsonObject["hasFocus"] =
             if (codeStream != null) codeStream.isVisible && codeStream.isFocused
             else false
+
+        jsonObject["__teamless__"] = jsonObject["__teamless__"] ?: JsonObject()
+        val teamless = jsonObject["__teamless__"].asJsonObject
+        val selectedRegion = teamless["selectedRegion"]
+        if (selectedRegion == null || selectedRegion.isJsonNull || selectedRegion.asString.isNullOrBlank()) {
+            project.sessionService?.environmentInfo?.environmentHosts?.let { hosts ->
+                val shortNames = hosts.map { it.shortName }
+                teamless["selectedRegion"] =
+                    shortNames.find { it.lowercase().contains("us") } ?: shortNames.firstOrNull()
+            }
+        }
+
         return jsonObject
     }
 

@@ -12,7 +12,12 @@ import {
 	UpdateThirdPartyStatusRequest,
 	UpdateThirdPartyStatusResponse
 } from "../protocol/agent.protocol";
-import { CSMarkerLocations, CSSlackProviderInfo, StreamType } from "../protocol/api.protocol";
+import {
+	CSChannelStream,
+	CSDirectStream,
+	CSSlackProviderInfo,
+	StreamType
+} from "../protocol/api.protocol";
 import { log, lspProvider } from "../system";
 import { ThirdPartyPostProviderBase, ThirdPartyProviderSupportsStatus } from "./provider";
 
@@ -50,7 +55,6 @@ export class SlackProvider extends ThirdPartyPostProviderBase<CSSlackProviderInf
 		const session = SessionContainer.instance().session;
 		const slackApi = new SlackSharingApiProvider(
 			session.api as CodeStreamApiProvider,
-			(session.api as CodeStreamApiProvider).team,
 			{
 				accessToken: providerInfo.accessToken!,
 				teamId: session.api.teamId,
@@ -122,14 +126,17 @@ export class SlackProvider extends ThirdPartyPostProviderBase<CSSlackProviderInf
 		}
 		const streams = await slackClient.fetchStreams({});
 		const channels = sortBy(
-			streams.streams.map(_ => {
-				return {
-					id: _.id,
-					name: _.name!,
-					type: _.type,
-					order: _.type === StreamType.Channel ? 0 : _.type === StreamType.Direct ? 2 : 1
-				};
-			}),
+			streams.streams
+				.filter(s => s.type !== StreamType.Object)
+				.map(s => {
+					const _ = s as CSChannelStream | CSDirectStream;
+					return {
+						id: _.id,
+						name: _.name!,
+						type: _.type,
+						order: _.type === StreamType.Channel ? 0 : _.type === StreamType.Direct ? 2 : 1
+					};
+				}),
 			[_ => _.order, _ => _.name]
 		);
 		return {

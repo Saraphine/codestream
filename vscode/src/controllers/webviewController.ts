@@ -2,6 +2,7 @@
 import {
 	ApiVersionCompatibility,
 	BootstrapResponse,
+	ConfigChangeReloadNotificationType,
 	ConnectionStatus,
 	DidChangeApiVersionCompatibilityNotification,
 	DidChangeApiVersionCompatibilityNotificationType,
@@ -11,11 +12,14 @@ import {
 	DidChangeDataNotificationType,
 	DidChangeDocumentMarkersNotification,
 	DidChangeDocumentMarkersNotificationType,
+	DidChangeProcessBufferNotification,
+	DidChangeProcessBufferNotificationType,
 	DidChangeServerUrlNotification,
 	DidChangeServerUrlNotificationType,
 	DidChangeVersionCompatibilityNotification,
 	DidChangeVersionCompatibilityNotificationType,
 	DidEncounterMaintenanceModeNotificationType,
+	DidResolveStackTraceLineNotificationType,
 	ReportingMessageType,
 	VersionCompatibility
 } from "@codestream/protocols/agent";
@@ -63,6 +67,7 @@ import {
 	ShowPreviousChangedFileRequestType,
 	ShowReviewNotificationType,
 	StartWorkNotificationType,
+	TeamlessContext,
 	UpdateConfigurationRequestType,
 	UpdateServerUrlRequestType,
 	WebviewContext,
@@ -78,7 +83,9 @@ import {
 	WebviewPanels,
 	SidebarLocation,
 	HostDidChangeLayoutNotificationType,
-	NewPullRequestBranch
+	NewPullRequestBranch,
+	ViewMethodLevelTelemetryNotificationType,
+	RefreshEditorsCodeLensRequestType
 } from "@codestream/protocols/webview";
 import { gate } from "system/decorators/gate";
 import {
@@ -100,6 +107,7 @@ import { NotificationType, RequestType } from "vscode-languageclient";
 import { Strings } from "system/string";
 import { openUrl } from "urlHandler";
 import { toLoggableIpcMessage, WebviewLike } from "webviews/webviewLike";
+import { toCSGitUri } from "providers/gitContentProvider";
 import {
 	CodeStreamSession,
 	SessionSignedOutReason,
@@ -126,6 +134,7 @@ export interface WebviewState {
 			context?: WebviewContext;
 		};
 	};
+	teamless?: TeamlessContext;
 }
 
 export class WebviewController implements Disposable {
@@ -148,6 +157,9 @@ export class WebviewController implements Disposable {
 			workspace.onDidChangeWorkspaceFolders(this.onWorkspaceFoldersChanged, this),
 			Container.agent.onDidEncounterMaintenanceMode(e => {
 				if (this._webview) this._webview.notify(DidEncounterMaintenanceModeNotificationType, e);
+			}),
+			Container.agent.onDidResolveStackTraceLine(e => {
+				if (this._webview) this._webview.notify(DidResolveStackTraceLineNotificationType, e);
 			})
 		);
 
@@ -182,6 +194,11 @@ export class WebviewController implements Disposable {
 
 	private async onSessionStatusChanged(e: SessionStatusChangedEvent) {
 		const status = e.getStatus();
+		const state = Container.context.workspaceState.get<WebviewState>(WorkspaceState.webviewState, {
+			hidden: undefined,
+			teams: {}
+		});
+		let teamState;
 		switch (status) {
 			case SessionStatus.SignedOut:
 				if (e.reason === SessionSignedOutReason.SignInFailure) {
@@ -201,21 +218,25 @@ export class WebviewController implements Disposable {
 					break;
 				}
 
+				if (state.teamless) {
+					this._context = {
+						currentTeamId: "_",
+						hasFocus: true,
+						onboardStep: 0,
+						__teamless__: state.teamless
+					};
+				}
+
 				break;
 
 			case SessionStatus.SignedIn:
 				this._lastEditor = Editor.getActiveOrVisible(undefined, this._lastEditor);
 
-				const state = Container.context.workspaceState.get<WebviewState>(
-					WorkspaceState.webviewState,
-					{
-						hidden: undefined,
-						teams: {}
-					}
-				);
-
-				const teamState = state.teams[this.session.team.id];
+				teamState = state.teams[this.session.team.id];
 				this._context = teamState && teamState.context;
+				if (this._context && state.teamless) {
+					this._context.__teamless__ = state.teamless;
+				}
 
 				// only show if the state is explicitly set to false
 				// (ignore if it's undefined)
@@ -477,6 +498,21 @@ export class WebviewController implements Disposable {
 	}
 
 	@log()
+	async viewMethodLevelTelemetry(args: any): Promise<void> {
+		if (this.visible) {
+			await this._webview!.show();
+		} else {
+			await this.show();
+		}
+
+		if (!this._webview) {
+			// it's possible that the webview is closing...
+			return;
+		}
+		this._webview!.notify(ViewMethodLevelTelemetryNotificationType, args);
+	}
+
+	@log()
 	async layoutChanged(): Promise<void> {
 		if (!this._webview) {
 			// it's possible that the webview is closing...
@@ -617,6 +653,16 @@ export class WebviewController implements Disposable {
 		this._webview!.notify(DidChangeServerUrlNotificationType, e);
 	}
 
+	@log({
+		args: false
+	})
+	async onProcessBufferChanged(e: DidChangeProcessBufferNotification) {
+		if (!this.visible) {
+			await this.show();
+		}
+		this._webview!.notify(DidChangeProcessBufferNotificationType, e);
+	}
+
 	@log()
 	toggle() {
 		return this.visible ? this.hide() : this.show();
@@ -672,8 +718,10 @@ export class WebviewController implements Disposable {
 	private async onEditorSelectionChanged(webview: WebviewLike, e: TextEditorSelectionChangeEvent) {
 		if (e.textEditor !== this._lastEditor || !this.isSupportedEditor(e.textEditor)) return;
 
+		const { fileUri, sha } = csUri.Uris.getFileUriAndSha(e.textEditor.document.uri);
 		webview.notify(HostDidChangeEditorSelectionNotificationType, {
-			uri: e.textEditor.document.uri.toString(true),
+			uri: fileUri.toString(true),
+			gitSha: sha,
 			selections: Editor.toEditorSelections(e.selections),
 			visibleRanges: Editor.toSerializableRange(e.textEditor.visibleRanges),
 			lineCount: e.textEditor.document.lineCount
@@ -686,8 +734,10 @@ export class WebviewController implements Disposable {
 	) {
 		if (e.textEditor !== this._lastEditor || !this.isSupportedEditor(e.textEditor)) return;
 
+		const { fileUri, sha } = csUri.Uris.getFileUriAndSha(e.textEditor.document.uri);
 		webview.notify(HostDidChangeEditorVisibleRangesNotificationType, {
-			uri: e.textEditor.document.uri.toString(true),
+			uri: fileUri.toString(true),
+			gitSha: sha,
 			selections: Editor.toEditorSelections(e.textEditor.selections),
 			visibleRanges: Editor.toSerializableRange(e.visibleRanges),
 			lineCount: e.textEditor.document.lineCount
@@ -696,7 +746,13 @@ export class WebviewController implements Disposable {
 
 	private isSupportedEditor(textEditor: TextEditor): boolean {
 		const uri = textEditor.document.uri;
-		if (uri.scheme !== "file" && uri.scheme !== "codestream-diff") return false;
+		if (
+			uri.scheme !== "file" &&
+			uri.scheme !== "codestream-diff" &&
+			uri.scheme !== "codestream-git"
+		) {
+			return false;
+		}
 
 		const csRangeDiffInfo = Strings.parseCSReviewDiffUrl(uri.toString());
 		if (
@@ -823,7 +879,11 @@ export class WebviewController implements Disposable {
 			}
 			case LogoutRequestType.method: {
 				webview.onIpcRequest(LogoutRequestType, e, async (_type, _params) => {
-					await Container.commands.signOut(SessionSignedOutReason.UserSignedOutFromWebview);
+					await Container.commands.signOut(
+						SessionSignedOutReason.UserSignedOutFromWebview,
+						_params.newServerUrl,
+						_params.newEnvironment
+					);
 					return emptyObj;
 				});
 
@@ -837,8 +897,12 @@ export class WebviewController implements Disposable {
 			}
 			case EditorHighlightRangeRequestType.method: {
 				webview.onIpcRequest(EditorHighlightRangeRequestType, e, async (_type, params) => {
+					let uri = Uri.parse(params.uri);
+					if (params.ref) {
+						uri = toCSGitUri(uri, params.ref);
+					}
 					const success = await Editor.highlightRange(
-						Uri.parse(params.uri),
+						uri,
 						Editor.fromSerializableRange(params.range),
 						this._lastEditor,
 						!params.highlight
@@ -850,8 +914,12 @@ export class WebviewController implements Disposable {
 			}
 			case EditorRevealRangeRequestType.method: {
 				webview.onIpcRequest(EditorRevealRangeRequestType, e, async (_type, params) => {
+					let uri = Uri.parse(params.uri);
+					if (params.ref) {
+						uri = toCSGitUri(uri, params.ref);
+					}
 					const success = await Editor.revealRange(
-						Uri.parse(params.uri),
+						uri,
 						Editor.fromSerializableRange(params.range),
 						this._lastEditor,
 						{
@@ -956,13 +1024,20 @@ export class WebviewController implements Disposable {
 			}
 			case UpdateServerUrlRequestType.method: {
 				webview.onIpcRequest(UpdateServerUrlRequestType, e, async (_type, params) => {
+					Container.setPendingServerUrl(params.serverUrl);
 					await configuration.update("serverUrl", params.serverUrl, ConfigurationTarget.Global);
-					await configuration.update(
-						"disableStrictSSL",
-						params.disableStrictSSL,
-						ConfigurationTarget.Global
+					if (params.disableStrictSSL !== undefined) {
+						await configuration.update(
+							"disableStrictSSL",
+							params.disableStrictSSL,
+							ConfigurationTarget.Global
+						);
+					}
+					Container.setServerUrl(
+						params.serverUrl,
+						params.disableStrictSSL ? true : false,
+						params.environment
 					);
-					Container.setServerUrl(params.serverUrl, params.disableStrictSSL ? true : false);
 					return emptyObj;
 				});
 
@@ -1069,6 +1144,15 @@ export class WebviewController implements Disposable {
 				});
 				break;
 			}
+			case RefreshEditorsCodeLensRequestType.method: {
+				webview.onIpcRequest(RefreshEditorsCodeLensRequestType, e, async (_type, _params) => {
+					await Container.commands.updateEditorCodeLens();
+					return {
+						success: true
+					};
+				});
+				break;
+			}
 			default: {
 				debugger;
 				throw new Error(`Unhandled webview request: ${e.method}`);
@@ -1107,7 +1191,7 @@ export class WebviewController implements Disposable {
 				email: Container.config.email,
 				serverUrl: this.session.serverUrl,
 				showHeadshots: Container.config.showAvatars,
-				team: Container.config.team
+				showGoldenSignalsInEditor: Container.config.goldenSignalsInEditor
 			},
 			environmentInfo: this.session.environmentInfo,
 			ide: {
@@ -1218,8 +1302,6 @@ export class WebviewController implements Disposable {
 		}
 
 		try {
-			if (!this.session.signedIn) return;
-
 			const prevState = Container.context.workspaceState.get<WebviewState>(
 				WorkspaceState.webviewState,
 				{
@@ -1227,15 +1309,30 @@ export class WebviewController implements Disposable {
 					teams: {}
 				}
 			);
+			if (!this.session.signedIn) {
+				if (this._context && this._context.__teamless__) {
+					const newState: WebviewState = {
+						hidden: prevState.hidden,
+						teams: prevState.teams,
+						teamless: this._context.__teamless__
+					};
+					Container.context.workspaceState.update(WorkspaceState.webviewState, newState);
+				}
+				return;
+			}
+
+			const teamId = this.session.signedIn && this.session.team && this.session.team.id;
 
 			const teams = prevState.teams || {};
-			teams[this.session.team.id] = {
+			const teamless = prevState.teamless || undefined;
+			teams[teamId] = {
 				context: this._context
 			};
 
 			Container.context.workspaceState.update(WorkspaceState.webviewState, {
-				hidden: hidden,
-				teams: teams
+				hidden,
+				teams,
+				teamless
 			});
 
 			if (
@@ -1281,5 +1378,10 @@ export class WebviewController implements Disposable {
 		} else {
 			Logger.log("No session for github to disconnect");
 		}
+	}
+
+	@log()
+	async onConfigChangeReload() {
+		this._webview!.notify(ConfigChangeReloadNotificationType, {});
 	}
 }

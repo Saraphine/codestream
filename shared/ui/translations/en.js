@@ -17,7 +17,7 @@ export default {
 	"signUp.submitButton": "Create Account",
 	"signUp.legal.start": "By signing up, you agree to the",
 	"signUp.legal.terms": "Terms",
-	"signUp.legal.privacyPolicy": "Privacy Policy",
+	"signUp.legal.privacyPolicy": "Privacy Notice",
 	"signUp.legal.telemetryConsent":
 		"Help CodeStream improve by allowing the use of 3rd-party analytics tools.",
 	"signUp.legal.learnMore": "Learn more.",
@@ -32,6 +32,7 @@ export default {
 	"signup.complete.button": "CONTINUE",
 	"confirmation.invalid": "Invalid code.",
 	"confirmation.expired": "Sorry, that code has expired.",
+	"confirmation.tooManyAttempts": "Code expired: Too many attempts.",
 	"confirmation.emailSent": "Email Sent!",
 	"confirmation.header": "You're almost there!",
 	"confirmation.instructions":
@@ -65,6 +66,7 @@ export default {
 	"createTeam.additionalInfo": "Note that a team can own multiple repositories.",
 	"createTeam.submitButton": "Create Team",
 	"createTeam.backToInvite": "Go Back",
+	"createCompany.submitButton": "Create Organization",
 	"teamSelection.error.noPermission": "You are not a member of the selected team.",
 	"teamSelection.error.teamNotFound": "The selected team doesn't exist.",
 	"teamSelection.backToInvite": "Go Back",
@@ -100,6 +102,7 @@ export default {
 	"setPassword.setPassword": "Set Password",
 	"setPassword.help": "6+ characters",
 	"createTeam.name.label": "Team Name",
+	"createCompany.name.label": "Organization Name",
 	"oktaConfig.submitButton": "Set Host URL",
 	"pullRequest.title": "Set a title"
 };

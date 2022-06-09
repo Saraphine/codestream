@@ -21,7 +21,7 @@ import {
 	window,
 	WindowState
 } from "vscode";
-import { NotificationType, RequestType } from "vscode-jsonrpc";
+import { NotificationType, RequestType, ResponseError } from "vscode-jsonrpc";
 import { CodeStreamSession, StreamThread } from "../api/session";
 import { Container } from "../container";
 import { Logger, TraceLevel } from "../logger";
@@ -381,7 +381,17 @@ export class CodeStreamWebviewPanel implements WebviewLike, Disposable {
 	private sendIpcResponse(request: WebviewIpcRequestMessage, response: object): void;
 	private sendIpcResponse(request: WebviewIpcRequestMessage, response: Error | object): void {
 		this.postMessage(
-			response instanceof Error
+			response instanceof ResponseError
+				? {
+						id: request.id,
+						error: {
+							code: response.code,
+							message: response.message,
+							data: response.data,
+							stack: response.stack
+						}
+				  }
+				: response instanceof Error
 				? {
 						id: request.id,
 						error: response.message

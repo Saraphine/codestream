@@ -6,12 +6,12 @@ import com.codestream.agentService
 import com.codestream.codeStream
 import com.codestream.extensions.merge
 import com.codestream.gson
+import com.codestream.protocols.agent.Ide
 import com.codestream.protocols.agent.LoginResult
 import com.codestream.protocols.agent.LoginWithTokenParams
 import com.codestream.protocols.webview.BootstrapResponse
 import com.codestream.protocols.webview.Capabilities
 import com.codestream.protocols.webview.DidChangeApiVersionCompatibility
-import com.codestream.protocols.webview.Ide
 import com.codestream.protocols.webview.UserSession
 import com.codestream.sessionService
 import com.codestream.settings.ApplicationSettingsService
@@ -48,7 +48,7 @@ class AuthenticationService(val project: Project) {
             appSettings.webViewConfigs,
             settings.getWebViewContextJson(),
             appSettings.extensionInfo.versionFormatted,
-            Ide(appSettings.ideInfo.name, appSettings.ideInfo.detail),
+            Ide,
             apiVersionCompatibility,
             missingCapabilities
         )
@@ -75,8 +75,7 @@ class AuthenticationService(val project: Project) {
                 agent.loginToken(
                     LoginWithTokenParams(
                         token,
-                        settings.state.teamId,
-                        appSettings.team
+                        settings.state.teamId
                     )
                 ).await()
 
@@ -108,13 +107,13 @@ class AuthenticationService(val project: Project) {
         }
     }
 
-    suspend fun logout() {
+    suspend fun logout(newServerUrl: String? = null) {
         val agent = project.agentService ?: return
         val session = project.sessionService ?: return
         val settings = project.settingsService ?: return
 
         session.logout()
-        agent.restart()
+        agent.restart(newServerUrl)
         settings.state.teamId = null
         saveAccessToken(null)
     }

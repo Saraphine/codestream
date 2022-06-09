@@ -10,13 +10,11 @@ import com.codestream.protocols.webview.EditorNotifications
 import com.codestream.protocols.webview.FocusNotifications
 import com.codestream.protocols.webview.Sidebar
 import com.codestream.protocols.webview.SidebarLocation
-import com.codestream.settings.ApplicationSettingsService
 import com.codestream.system.CodeStreamDiffURLStreamHandler
 import com.codestream.workaround.ToolWindowManagerWorkaround
 import com.intellij.ProjectTopics
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.ServiceManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -30,9 +28,14 @@ import com.intellij.openapi.wm.ToolWindowType
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.util.ui.UIUtil
+import org.apache.commons.io.FileUtils
+import org.reflections.Reflections
+import org.reflections.scanners.ResourcesScanner
 import java.awt.KeyboardFocusManager
 import java.awt.event.WindowEvent
 import java.awt.event.WindowFocusListener
+import java.io.File
+import java.nio.file.Files
 import kotlin.properties.Delegates
 
 const val CODESTREAM_TOOL_WINDOW_ID = "CodeStream"
@@ -53,11 +56,11 @@ class CodeStreamComponent(val project: Project) : Disposable {
     init {
         logger.info("Initializing CodeStream")
         CodeStreamDiffURLStreamHandler
+        extractAssets()
         initDebugMonitors()
         initEditorFactoryListener()
         initVirtualFileListener()
         initMessageBusSubscriptions()
-        showToolWindowOnFirstRun()
         ApplicationManager.getApplication().invokeLater {
             initWindowFocusListener()
             initUnreadsListener()
@@ -65,6 +68,28 @@ class CodeStreamComponent(val project: Project) : Disposable {
         project.agentService?.onDidStart {
             val webViewService = project.webViewService ?: return@onDidStart
             webViewService.load()
+        }
+    }
+
+    private fun extractAssets() {
+        try {
+            val userHomeDir = File(System.getProperty("user.home"))
+            val protobufDir = userHomeDir.resolve(".codestream").resolve("protobuf")
+            if (!protobufDir.exists()) {
+                Files.createDirectories(protobufDir.toPath())
+            }
+            val reflections = Reflections("protobuf", ResourcesScanner())
+            val resourceList = reflections.getResources { true }
+            val csDir = userHomeDir.resolve(".codestream")
+            resourceList.forEach {
+                val dest = csDir.resolve(it)
+                if (!dest.parentFile.exists()) {
+                    Files.createDirectories(dest.parentFile.toPath())
+                }
+                FileUtils.copyToFile(javaClass.getResourceAsStream("/$it"), dest)
+            }
+        } catch (e: Exception) {
+            logger.error(e)
         }
     }
 
@@ -142,18 +167,6 @@ class CodeStreamComponent(val project: Project) : Disposable {
         }
     }
 
-    private fun showToolWindowOnFirstRun() {
-        val settings = ServiceManager.getService(ApplicationSettingsService::class.java)
-        if (settings.firstRun) {
-            project.webViewService?.onDidInitialize {
-                ApplicationManager.getApplication().invokeLater {
-                    show()
-                    settings.firstRun = false
-                }
-            }
-        }
-    }
-
     fun toggleVisible() {
         when (isVisible) {
             true -> hide()
@@ -162,9 +175,11 @@ class CodeStreamComponent(val project: Project) : Disposable {
     }
 
     fun show(afterShow: (() -> Unit)? = null) {
-        toolWindow?.show {
-            project.webViewService?.webView?.focus()
-            afterShow?.invoke()
+        ApplicationManager.getApplication().invokeLater {
+            toolWindow?.show {
+                project.webViewService?.webView?.focus()
+                afterShow?.invoke()
+            }
         }
     }
 

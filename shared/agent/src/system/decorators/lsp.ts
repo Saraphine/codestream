@@ -79,9 +79,12 @@ export function lspProvider<T extends object>(name: string): Function {
 
 export function registerProviders(
 	providers: ThirdPartyProviders,
-	session: CodeStreamSession
+	session: CodeStreamSession,
+	clear: boolean = true
 ): void {
-	providerRegistry.clear();
+	if (clear) {
+		providerRegistry.clear();
+	}
 	for (const providerId in providers) {
 		const provider = providers[providerId];
 		const type = providerTypeRegistry.get(provider.name);

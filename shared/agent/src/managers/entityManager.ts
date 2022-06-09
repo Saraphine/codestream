@@ -103,5 +103,5 @@ export abstract class CachedEntityManagerBase<T extends CSEntity> extends Entity
 		super.invalidateCache();
 	}
 
-	protected abstract async loadCache(): Promise<void>;
+	protected abstract loadCache(): Promise<void>;
 }

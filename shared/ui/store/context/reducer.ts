@@ -47,7 +47,12 @@ const initialState: ContextState = {
 	showFeedbackSmiley: true,
 	route: { name: Route.NewUser, params: {} },
 	spatialViewShowPRComments: false,
-	composeCodemarkActive: undefined
+	composeCodemarkActive: undefined,
+	errorsInboxOptions: undefined,
+	currentInstrumentation: undefined,
+	currentPixieDynamicLoggingOptions: undefined,
+	wantNewRelicOptions: undefined,
+	currentPullRequestNeedsRefresh: { needsRefresh: false, providerId: "", pullRequestId: "" }
 };
 
 export function reduceContext(
@@ -57,6 +62,8 @@ export function reduceContext(
 	switch (action.type) {
 		case ContextActionsType.SetContext:
 			return { ...state, ...action.payload };
+		case ContextActionsType.SetTeamlessContext:
+			return { ...state, __teamless__: { ...(state.__teamless__ || {}), ...action.payload } };
 		case ContextActionsType.SetCurrentStream: {
 			const { streamId, threadId } = action.payload;
 			return { ...state, currentStreamId: streamId, threadId };
@@ -124,6 +131,12 @@ export function reduceContext(
 			return { ...state, currentReviewId: action.payload.reviewId };
 		case ContextActionsType.SetCurrentReviewOptions:
 			return { ...state, currentReviewOptions: action.payload.options };
+		case ContextActionsType.SetCurrentCodeError:
+			return {
+				...state,
+				currentCodeErrorId: action.payload.codeErrorId,
+				currentCodeErrorData: action.payload.data
+			};
 		case ContextActionsType.SetCurrentRepo:
 			return {
 				...state,
@@ -146,7 +159,11 @@ export function reduceContext(
 								providerId: action.payload.providerId,
 								id: action.payload.id,
 								commentId: action.payload.commentId,
-								source: action.payload.source
+								source: action.payload.source,
+								view: action.payload.view,
+								previousView: state?.currentPullRequest?.view,
+								// @ts-ignore
+								groupIndex: action.payload?.groupIndex
 						  }
 						: undefined,
 				pullRequestCheckoutBranch: false
@@ -161,6 +178,36 @@ export function reduceContext(
 			return {
 				...state,
 				newPullRequestOptions: action.payload.options
+			};
+		}
+		case ContextActionsType.SetCurrentErrorsInboxOptions: {
+			return {
+				...state,
+				errorsInboxOptions: action.payload
+			};
+		}
+		case ContextActionsType.SetCurrentPullRequestNeedsRefresh: {
+			return {
+				...state,
+				currentPullRequestNeedsRefresh: action.payload
+			};
+		}
+		case ContextActionsType.SetCurrentInstrumentationOptions: {
+			return {
+				...state,
+				currentInstrumentation: action.payload.options
+			};
+		}
+		case ContextActionsType.SetCurrentPixieDynamicLoggingOptions: {
+			return {
+				...state,
+				currentPixieDynamicLoggingOptions: action.payload.options
+			};
+		}
+		case ContextActionsType.SetWantNewRelicOptions: {
+			return {
+				...state,
+				wantNewRelicOptions: action.payload
 			};
 		}
 		case ContextActionsType.SetStartWorkCard:
@@ -195,11 +242,26 @@ export function reduceContext(
 			return state;
 		}
 
+		case ContextActionsType.SetPendingProtocolHandlerUrl:
+			return {
+				...state,
+				pendingProtocolHandlerUrl: action.payload.url,
+				pendingProtocolHandlerQuery: action.payload.query
+			};
+
+		case ContextActionsType.SetCurrentMethodLevelTelemetry: {
+			return {
+				...state,
+				currentMethodLevelTelemetry: action.payload.data
+			};
+		}
+
 		case "RESET":
 			return {
 				...initialState,
 				route: { name: Route.Login, params: {} },
-				chatProviderAccess: state.chatProviderAccess
+				chatProviderAccess: state.chatProviderAccess,
+				__teamless__: state.__teamless__
 			};
 		default:
 			return { ...initialState, ...state };

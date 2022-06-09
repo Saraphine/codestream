@@ -99,6 +99,7 @@ export interface MarkerNotLocated extends CSMarker {
 
 export interface FetchDocumentMarkersRequest {
 	textDocument: TextDocumentIdentifier;
+	gitSha?: string;
 	applyFilters: boolean;
 }
 export interface FetchDocumentMarkersResponse {
